@@ -10,7 +10,6 @@ struct ContentView: View {
     @State private var setupMonitor = KeyboardSetupMonitor()
     @State private var practiceText = ""
     @State private var showReturnAppsEditor = false
-    @State private var relayAddress = ""
     @FocusState private var practiceFocused: Bool
 
     var body: some View {
@@ -407,27 +406,7 @@ struct ContentView: View {
 
             dividerLine
 
-            VStack(alignment: .leading, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Transcribe remotely")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(HexTheme.textBase)
-                    Text("Hex relay address on your tailnet. Falls back to this iPhone when it doesn't answer.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(HexTheme.textFaint)
-                }
-                TextField("shed.tailnet.ts.net:10003", text: $relayAddress)
-                    .font(.system(size: 13))
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .keyboardType(.URL)
-                    .submitLabel(.done)
-                    .onSubmit { dictation.setRelayAddress(relayAddress) }
-                    .padding(.horizontal, 11)
-                    .frame(height: 32)
-                    .background(HexTheme.layer02, in: RoundedRectangle(cornerRadius: 10))
-            }
-            .onAppear { relayAddress = dictation.relayURL?.absoluteString ?? "" }
+            RemoteHexSection(dictation: dictation)
 
             dividerLine
 
@@ -887,4 +866,71 @@ struct ContentView: View {
         openedFromKeyboard: .constant(false),
         showSetup: .constant(false)
     )
+}
+
+/// Pairs with a desktop Hex in the tailnet that then transcribes for this iPhone.
+private struct RemoteHexSection: View {
+    let dictation: DictationController
+    @State private var address = ""
+    @State private var code = ""
+    @State private var pairing = false
+    @State private var failure: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Transcribe on another Hex")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(HexTheme.textBase)
+                Text(caption)
+                    .font(.system(size: 12))
+                    .foregroundStyle(failure == nil ? HexTheme.textFaint : .red)
+            }
+            if dictation.pairedHex != nil {
+                Button("Unpair") { dictation.unpairHex() }
+                    .font(.system(size: 13, weight: .medium))
+            } else {
+                field("cbook.tailnet.ts.net:47831", text: $address, keyboard: .URL)
+                HStack(spacing: 8) {
+                    field("Code", text: $code, keyboard: .asciiCapable)
+                    Button(pairing ? "Pairing…" : "Pair", action: pair)
+                        .font(.system(size: 13, weight: .medium))
+                        .disabled(pairing || address.isEmpty || code.isEmpty)
+                }
+            }
+        }
+    }
+
+    private var caption: String {
+        if let failure { return failure }
+        if let hex = dictation.pairedHex {
+            return "\(hex.name) transcribes with its model and Modes. Falls back to this iPhone when it doesn't answer."
+        }
+        return "Run hex remote pair on a Mac or PC in your tailnet, then enter its address and code."
+    }
+
+    private func field(_ placeholder: String, text: Binding<String>, keyboard: UIKeyboardType) -> some View {
+        TextField(placeholder, text: text)
+            .font(.system(size: 13))
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .keyboardType(keyboard)
+            .padding(.horizontal, 11)
+            .frame(height: 32)
+            .background(HexTheme.layer02, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func pair() {
+        pairing = true
+        failure = nil
+        Task {
+            do {
+                try await dictation.pairWithHex(address: address, code: code)
+                code = ""
+            } catch {
+                failure = error.localizedDescription
+            }
+            pairing = false
+        }
+    }
 }

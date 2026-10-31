@@ -305,7 +305,6 @@ struct KeyboardBridge {
         static let style = "settings.dictationStyle"
         static let returnAppID = "settings.returnAppID"
         static let quickReturnAppIDs = "settings.quickReturnAppIDs"
-        static let relayURL = "settings.relayURL"
         static let allowBluetoothMic = "settings.allowBluetoothMic"
         static let lastInsertedResultID = "keyboard.lastInsertedResultID"
         static let fullAccessSeenAt = "keyboard.fullAccessSeenAt"
@@ -392,19 +391,6 @@ struct KeyboardBridge {
         HostAppCatalog.app(for: returnAppID)
     }
 
-    /// The Hex relay that transcribes for this iPhone; nil transcribes on device only.
-    var relayURL: URL? {
-        get {
-            defaults?.string(forKey: Key.relayURL).flatMap(URL.init(string:))
-        }
-        nonmutating set {
-            if let newValue {
-                defaults?.set(newValue.absoluteString, forKey: Key.relayURL)
-            } else {
-                defaults?.removeObject(forKey: Key.relayURL)
-            }
-        }
-    }
 
     /// The apps the keyboard offers to jump back to, in the user's order.
     var quickReturnApps: [HostApp] {

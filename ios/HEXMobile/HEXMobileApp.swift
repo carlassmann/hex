@@ -28,6 +28,10 @@ struct HEXMobileApp: App {
                     showSetup: $showSetup
                 )
                 .onOpenURL { url in
+                    if let link = RemoteHexPairing.link(url) {
+                        Task { try? await dictation.pairWithHex(address: link.address, code: link.code) }
+                        return
+                    }
                     guard let request = KeyboardLaunchRequest(url: url) else { return }
                     if case .setup = request {
                         openedFromKeyboard = false

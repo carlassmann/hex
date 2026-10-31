@@ -96,7 +96,7 @@ final class DictationController {
     private(set) var style: DictationStyle
     private(set) var returnAppID: String?
     private(set) var quickReturnApps: [HostApp]
-    private(set) var relayURL: URL?
+    private(set) var pairedHex: PairedHex?
     private(set) var allowBluetoothMic: Bool
     private(set) var autoReturnState: AutoReturnState = .idle
     private(set) var handoffNotice: String?
@@ -125,7 +125,7 @@ final class DictationController {
         self.keyboardBridge = resolvedBridge
         self.transcriber = initialTranscriber
         self.transcriberFactory = transcriberFactory ?? {
-            await Self.defaultTranscriber(relayURL: resolvedBridge.relayURL)
+            await Self.defaultTranscriber(paired: PairedHexStore.load())
         }
         self.fileManager = fileManager
         self.now = now
@@ -133,7 +133,7 @@ final class DictationController {
         self.style = resolvedBridge.style
         self.returnAppID = resolvedBridge.returnAppID
         self.quickReturnApps = resolvedBridge.quickReturnApps
-        self.relayURL = resolvedBridge.relayURL
+        self.pairedHex = PairedHexStore.load()?.hex
         self.allowBluetoothMic = resolvedBridge.allowBluetoothMic
         self.defaultURLOpener = urlOpener ?? { url in
             await UIApplication.shared.open(url)
@@ -221,13 +221,19 @@ final class DictationController {
         keyboardBridge.returnAppID = normalized
     }
 
-    /// Accepts `shed.tailnet.ts.net:10003` as well as a full URL; empty turns the relay off.
-    func setRelayAddress(_ address: String) {
-        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
-        let url = trimmed.isEmpty ? nil : URL(string: trimmed.contains("://") ? trimmed : "https://\(trimmed)")
-        guard url != relayURL else { return }
-        relayURL = url
-        keyboardBridge.relayURL = url
+    /// Pairs with a desktop Hex (`hex remote pair` there), which then transcribes for this iPhone.
+    func pairWithHex(address: String, code: String) async throws {
+        pairedHex = try await RemoteHexPairing.pair(address: address, code: code)
+        reloadTranscriberIfIdle()
+    }
+
+    func unpairHex() {
+        PairedHexStore.forget()
+        pairedHex = nil
+        reloadTranscriberIfIdle()
+    }
+
+    private func reloadTranscriberIfIdle() {
         if phase == .ready || isFailedPhase {
             prepareModel()
         }
@@ -641,10 +647,10 @@ final class DictationController {
         }
     }
 
-    private static func defaultTranscriber(relayURL: URL?) async -> any LocalTranscribing {
+    private static func defaultTranscriber(paired: (hex: PairedHex, token: String)?) async -> any LocalTranscribing {
         let onDevice = await onDeviceTranscriber()
-        guard let relayURL else { return onDevice }
-        return RemoteTranscriber(relayURL: relayURL, fallback: onDevice)
+        guard let paired else { return onDevice }
+        return RemoteTranscriber(hex: paired.hex, token: paired.token, fallback: onDevice)
     }
 
     private static func onDeviceTranscriber() async -> any LocalTranscribing {

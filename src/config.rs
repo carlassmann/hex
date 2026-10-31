@@ -27,7 +27,7 @@ fn dictation_profiles_lock() -> &'static RwLock<Profiles> {
     })
 }
 
-fn build_dictation_profiles(settings: &DictationProcessingSettings) -> Profiles {
+pub(crate) fn build_dictation_profiles(settings: &DictationProcessingSettings) -> Profiles {
     let mut profiles = Profiles::new(Profile::from_mode(&settings.default_mode));
     for mode in &settings.modes {
         let profile = Profile::from_mode(mode);

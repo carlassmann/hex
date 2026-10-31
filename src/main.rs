@@ -154,6 +154,7 @@ mod process_exit;
 mod recognition;
 #[cfg(target_os = "macos")]
 mod recording_environment;
+mod remote_pairing;
 mod rune_hud;
 mod rune_ui;
 mod speech_detector;

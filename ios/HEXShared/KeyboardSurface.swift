@@ -25,6 +25,7 @@ final class KeyboardViewModel: ObservableObject {
     @Published var isModelInstalled = false
     @Published var style: DictationStyle = .polished
     @Published var returnAppID: String?
+    @Published var quickReturnApps: [HostApp] = HostAppCatalog.quickChips
     @Published var activeTray: PickerTray = .none
     @Published var now: TimeInterval = Date().timeIntervalSince1970
     @Published var coldStartURL: URL = KeyboardLaunchRequest.startSession(requestedAt: nil, returnAppID: nil).url
@@ -191,7 +192,7 @@ struct KeyboardSurfaceView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 4) {
                         returnChip(id: nil, label: "Swipe")
-                        ForEach(HostAppCatalog.quickChips) { app in
+                        ForEach(model.quickReturnApps) { app in
                             returnChip(id: app.id, label: app.name)
                         }
                     }

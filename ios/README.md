@@ -31,7 +31,8 @@ it never accesses the microphone, speech model, or network.
     cannot inspect the host app's bundle ID without private APIs, you pick your
     usual return app once on the `↩` chip (or jump bar), and apps without a
     registered URL scheme fall back cleanly within ~1s to the bottom-edge swipe
-    bar and quick-jump chips.
+    bar and quick-jump chips. **Edit apps…** in the app's return menu picks and
+    orders the apps the keyboard tray and jump bar offer.
   - **Warm session (`Off`, `5m`, `15m`, `1h`):** Keeps an `AVAudioEngine` input
     session alive for the chosen duration (default `15m`) so subsequent taps on
     **Dictate** record directly inside the keyboard with zero app switches. The

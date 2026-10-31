@@ -103,6 +103,7 @@ final class KeyboardViewController: UIInputViewController {
         viewModel.isModelInstalled = bridge.isModelInstalled
         viewModel.style = bridge.style
         viewModel.returnAppID = bridge.returnAppID
+        viewModel.quickReturnApps = bridge.quickReturnApps
 
         if snap.hasDeliverableResult(at: now),
            let resultID = snap.resultID,

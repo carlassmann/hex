@@ -9,6 +9,7 @@ struct ContentView: View {
     @Binding var showSetup: Bool
     @State private var setupMonitor = KeyboardSetupMonitor()
     @State private var practiceText = ""
+    @State private var showReturnAppsEditor = false
     @FocusState private var practiceFocused: Bool
 
     var body: some View {
@@ -367,7 +368,7 @@ struct ContentView: View {
 
                     Divider()
 
-                    ForEach(HostAppCatalog.all) { app in
+                    ForEach(dictation.quickReturnApps) { app in
                         Button {
                             dictation.setReturnAppID(app.id)
                         } label: {
@@ -378,6 +379,10 @@ struct ContentView: View {
                             }
                         }
                     }
+
+                    Divider()
+
+                    Button("Edit apps…") { showReturnAppsEditor = true }
                 } label: {
                     HStack(spacing: 5) {
                         Text(dictation.selectedReturnApp?.name ?? "Swipe back")
@@ -391,6 +396,12 @@ struct ContentView: View {
                     .frame(height: 32)
                     .background(HexTheme.layer02, in: RoundedRectangle(cornerRadius: 10))
                 }
+            }
+            .sheet(isPresented: $showReturnAppsEditor) {
+                ReturnAppsSheet(
+                    chosen: dictation.quickReturnApps,
+                    onSave: dictation.setQuickReturnApps
+                )
             }
 
             dividerLine
@@ -584,7 +595,7 @@ struct ContentView: View {
 
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 6) {
-                                ForEach(HostAppCatalog.quickChips) { app in
+                                ForEach(dictation.quickReturnApps) { app in
                                     let isSelected = dictation.returnAppID == app.id
                                     Button {
                                         dictation.returnToHostApp(app, remember: true)

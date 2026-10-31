@@ -96,6 +96,7 @@ final class DictationController {
     private(set) var style: DictationStyle
     private(set) var returnAppID: String?
     private(set) var quickReturnApps: [HostApp]
+    private(set) var relayURL: URL?
     private(set) var allowBluetoothMic: Bool
     private(set) var autoReturnState: AutoReturnState = .idle
     private(set) var handoffNotice: String?
@@ -123,13 +124,16 @@ final class DictationController {
         self.audio = resolvedAudio
         self.keyboardBridge = resolvedBridge
         self.transcriber = initialTranscriber
-        self.transcriberFactory = transcriberFactory ?? Self.defaultTranscriber
+        self.transcriberFactory = transcriberFactory ?? {
+            await Self.defaultTranscriber(relayURL: resolvedBridge.relayURL)
+        }
         self.fileManager = fileManager
         self.now = now
         self.warmDuration = resolvedBridge.warmDuration
         self.style = resolvedBridge.style
         self.returnAppID = resolvedBridge.returnAppID
         self.quickReturnApps = resolvedBridge.quickReturnApps
+        self.relayURL = resolvedBridge.relayURL
         self.allowBluetoothMic = resolvedBridge.allowBluetoothMic
         self.defaultURLOpener = urlOpener ?? { url in
             await UIApplication.shared.open(url)
@@ -215,6 +219,18 @@ final class DictationController {
         let normalized = (id?.isEmpty == true) ? nil : id
         returnAppID = normalized
         keyboardBridge.returnAppID = normalized
+    }
+
+    /// Accepts `shed.tailnet.ts.net:10003` as well as a full URL; empty turns the relay off.
+    func setRelayAddress(_ address: String) {
+        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        let url = trimmed.isEmpty ? nil : URL(string: trimmed.contains("://") ? trimmed : "https://\(trimmed)")
+        guard url != relayURL else { return }
+        relayURL = url
+        keyboardBridge.relayURL = url
+        if phase == .ready || isFailedPhase {
+            prepareModel()
+        }
     }
 
     /// Unticking the saved return app also forgets it, so the ↩ chip only ever names an app in the list.
@@ -625,7 +641,13 @@ final class DictationController {
         }
     }
 
-    private static func defaultTranscriber() async -> any LocalTranscribing {
+    private static func defaultTranscriber(relayURL: URL?) async -> any LocalTranscribing {
+        let onDevice = await onDeviceTranscriber()
+        guard let relayURL else { return onDevice }
+        return RemoteTranscriber(relayURL: relayURL, fallback: onDevice)
+    }
+
+    private static func onDeviceTranscriber() async -> any LocalTranscribing {
         if #available(iOS 26.0, *),
            AppleSpeechTranscriber.isAvailable,
            let locale = await AppleSpeechTranscriber.preferredLocale() {

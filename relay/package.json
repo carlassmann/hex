@@ -1,0 +1,15 @@
+{
+  "name": "relay",
+  "module": "index.ts",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  },
+  "private": true,
+  "scripts": {
+    "typecheck": "bun check"
+  },
+  "type": "module"
+}

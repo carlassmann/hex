@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var setupMonitor = KeyboardSetupMonitor()
     @State private var practiceText = ""
     @State private var showReturnAppsEditor = false
+    @State private var relayAddress = ""
     @FocusState private var practiceFocused: Bool
 
     var body: some View {
@@ -403,6 +404,30 @@ struct ContentView: View {
                     onSave: dictation.setQuickReturnApps
                 )
             }
+
+            dividerLine
+
+            VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Transcribe remotely")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(HexTheme.textBase)
+                    Text("Hex relay address on your tailnet. Falls back to this iPhone when it doesn't answer.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(HexTheme.textFaint)
+                }
+                TextField("shed.tailnet.ts.net:10003", text: $relayAddress)
+                    .font(.system(size: 13))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .submitLabel(.done)
+                    .onSubmit { dictation.setRelayAddress(relayAddress) }
+                    .padding(.horizontal, 11)
+                    .frame(height: 32)
+                    .background(HexTheme.layer02, in: RoundedRectangle(cornerRadius: 10))
+            }
+            .onAppear { relayAddress = dictation.relayURL?.absoluteString ?? "" }
 
             dividerLine
 

@@ -97,6 +97,10 @@ final class DictationController {
     private(set) var returnAppID: String?
     private(set) var quickReturnApps: [HostApp]
     private(set) var pairedHex: PairedHex?
+    /// The paired Hex's word list as last synced; empty while unpaired.
+    private(set) var wordList: [RemoteVocabulary.Term] = []
+    private(set) var wordListError: String?
+    private var syncingWords = false
     private(set) var allowBluetoothMic: Bool
     private(set) var autoReturnState: AutoReturnState = .idle
     private(set) var handoffNotice: String?
@@ -225,12 +229,61 @@ final class DictationController {
     func pairWithHex(address: String, code: String) async throws {
         pairedHex = try await RemoteHexPairing.pair(address: address, code: code)
         reloadTranscriberIfIdle()
+        await syncWordList()
     }
 
     func unpairHex() {
         PairedHexStore.forget()
         pairedHex = nil
+        wordList = []
         reloadTranscriberIfIdle()
+    }
+
+    // MARK: - Word list
+
+    /// Sends the words the keyboard queued to the paired Hex, then reads its list back.
+    /// Queued words stay queued until the paired Hex takes them.
+    func syncWordList() async {
+        guard !syncingWords, let paired = PairedHexStore.load() else { return }
+        syncingWords = true
+        defer { syncingWords = false }
+        do {
+            let queued = keyboardBridge.pendingWords
+            var synced: [String] = []
+            for word in queued {
+                wordList = try await RemoteVocabulary.add(word, on: paired.hex, token: paired.token)
+                synced.append(word)
+            }
+            keyboardBridge.removePendingWords(synced)
+            if queued.isEmpty {
+                wordList = try await RemoteVocabulary.list(on: paired.hex, token: paired.token)
+            }
+            wordListError = nil
+        } catch {
+            wordListError = "\(paired.hex.name) didn't answer. Words you add wait until it does."
+        }
+    }
+
+    func addWord(_ word: String) async {
+        let trimmed = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        keyboardBridge.queueWord(trimmed)
+        await syncWordList()
+    }
+
+    func removeWord(_ term: RemoteVocabulary.Term) async {
+        guard let paired = PairedHexStore.load() else { return }
+        do {
+            wordList = try await RemoteVocabulary.remove(term.term, on: paired.hex, token: paired.token)
+            wordListError = nil
+        } catch {
+            wordListError = "\(paired.hex.name) didn't answer, so the word stays."
+        }
+    }
+
+    /// Words still waiting for the paired Hex.
+    var pendingWords: [String] {
+        keyboardBridge.pendingWords
     }
 
     private func reloadTranscriberIfIdle() {
@@ -915,6 +968,9 @@ final class DictationController {
 
                 self.consumeKeyboardCommand()
                 self.publishKeyboardSnapshot()
+                if !self.keyboardBridge.pendingWords.isEmpty {
+                    Task { await self.syncWordList() }
+                }
                 try? await Task.sleep(for: .milliseconds(100))
             }
         }

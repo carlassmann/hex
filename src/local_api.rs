@@ -682,6 +682,13 @@ fn http_worker(pending: Arc<Mutex<Receiver<TcpStream>>>, context: Arc<HttpContex
                 body_prefix,
                 &context,
             ),
+            RequestAction::RemoteVocabulary {
+                remove,
+                content_length,
+                body_prefix,
+            } => {
+                remote::edit_vocabulary(&mut stream, remove, content_length, body_prefix, &context)
+            }
         }
     }
 }
@@ -1631,6 +1638,11 @@ enum RequestAction {
     },
     RemoteDictation {
         application: String,
+        content_length: usize,
+        body_prefix: Vec<u8>,
+    },
+    RemoteVocabulary {
+        remove: bool,
         content_length: usize,
         body_prefix: Vec<u8>,
     },

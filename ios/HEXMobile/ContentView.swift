@@ -876,6 +876,7 @@ private struct RemoteHexSection: View {
     @State private var pairing = false
     @State private var scanning = false
     @State private var fallsBackToDevice = PairedHexStore.fallsBackToDevice
+    @State private var showingWordList = false
     @State private var failure: String?
 
     var body: some View {
@@ -892,6 +893,8 @@ private struct RemoteHexSection: View {
                 Toggle("Fall back to this iPhone", isOn: $fallsBackToDevice)
                     .font(.system(size: 13))
                     .onChange(of: fallsBackToDevice) { _, on in PairedHexStore.fallsBackToDevice = on }
+                Button(wordListLabel) { showingWordList = true }
+                    .font(.system(size: 13, weight: .medium))
                 Button("Unpair") { dictation.unpairHex() }
                     .font(.system(size: 13, weight: .medium))
             } else {
@@ -909,6 +912,10 @@ private struct RemoteHexSection: View {
                 }
             }
         }
+        .task(id: dictation.pairedHex) { await dictation.syncWordList() }
+        .sheet(isPresented: $showingWordList) {
+            WordListSheet(dictation: dictation)
+        }
         .sheet(isPresented: $scanning) {
             PairingScanner { scannedAddress, scannedCode in
                 scanning = false
@@ -917,6 +924,14 @@ private struct RemoteHexSection: View {
                 pair()
             }
             .ignoresSafeArea()
+        }
+    }
+
+    private var wordListLabel: String {
+        switch dictation.wordList.count {
+        case 0: "Word list"
+        case 1: "Word list · 1 word"
+        case let count: "Word list · \(count) words"
         }
     }
 
@@ -953,5 +968,68 @@ private struct RemoteHexSection: View {
             }
             pairing = false
         }
+    }
+}
+
+/// The paired Hex's word list: names and terms its transcription and cleanup spell right.
+/// Select a word in any app and tap "Add to word list" on the Hex keyboard, or add it here.
+private struct WordListSheet: View {
+    let dictation: DictationController
+    @State private var newWord = ""
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    HStack {
+                        TextField("Add a word or name", text: $newWord)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .onSubmit(add)
+                        Button("Add", action: add)
+                            .disabled(newWord.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                } footer: {
+                    Text(dictation.wordListError
+                        ?? "Synced with \(dictation.pairedHex?.name ?? "your Hex"). In any app, select a word and tap Add to word list on the Hex keyboard.")
+                }
+                if !dictation.pendingWords.isEmpty {
+                    Section("Waiting to sync") {
+                        ForEach(dictation.pendingWords, id: \.self) { Text($0).foregroundStyle(.secondary) }
+                    }
+                }
+                Section {
+                    ForEach(dictation.wordList) { term in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(term.term)
+                            if !term.soundsLike.isEmpty {
+                                Text("Sounds like \(term.soundsLike.joined(separator: ", "))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .onDelete { offsets in
+                        let terms = offsets.map { dictation.wordList[$0] }
+                        Task { for term in terms { await dictation.removeWord(term) } }
+                    }
+                }
+            }
+            .navigationTitle("Word list")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+            .refreshable { await dictation.syncWordList() }
+            .task { await dictation.syncWordList() }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private func add() {
+        let word = newWord
+        newWord = ""
+        Task { await dictation.addWord(word) }
     }
 }

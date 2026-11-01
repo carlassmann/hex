@@ -24,6 +24,9 @@ final class KeyboardViewModel: ObservableObject {
     @Published var snapshot: KeyboardSnapshot = .offline
     @Published var isModelInstalled = false
     @Published var transcriberName: String?
+    /// The selected text in the host field, when it could be a word-list entry.
+    @Published var selectedWord: String?
+    @Published var addedWord: String?
     @Published var style: DictationStyle = .polished
     @Published var returnAppID: String?
     @Published var quickReturnApps: [HostApp] = HostAppCatalog.quickChips
@@ -32,6 +35,7 @@ final class KeyboardViewModel: ObservableObject {
     @Published var coldStartURL: URL = KeyboardLaunchRequest.startSession(requestedAt: nil, returnAppID: nil).url
     @Published var pendingCommand: PendingCommand?
 
+    var onAddWord: ((String) -> Void)?
     var onDictateTap: (() -> Void)?
     var onStopTap: (() -> Void)?
     var onCancelTap: (() -> Void)?
@@ -202,6 +206,10 @@ struct KeyboardSurfaceView: View {
             }
             .frame(height: 30)
 
+        case .none where model.hasFullAccess && (model.selectedWord ?? model.addedWord) != nil:
+            wordListBar
+                .frame(height: 30)
+
         case .none:
             HStack(spacing: 8) {
                 statusLead
@@ -248,6 +256,39 @@ struct KeyboardSurfaceView: View {
                 }
             }
             .frame(height: 30)
+        }
+    }
+
+    @ViewBuilder
+    private var wordListBar: some View {
+        if let word = model.selectedWord, word != model.addedWord {
+            Button {
+                model.onAddWord?(word)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "text.badge.plus")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Add “\(word)” to word list")
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(HexTheme.textBase)
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, minHeight: 28)
+                .background(HexTheme.layer01, in: Capsule())
+                .overlay(Capsule().stroke(HexTheme.borderWeak, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        } else if let word = model.addedWord {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("“\(word)” is in your word list")
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(HexTheme.textMuted)
+            .frame(maxWidth: .infinity, minHeight: 28)
         }
     }
 

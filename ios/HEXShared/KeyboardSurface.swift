@@ -71,7 +71,7 @@ private struct GlobeKeyRepresentable: UIViewRepresentable {
             systemName: "globe",
             withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .medium)
         )
-        config.baseForegroundColor = UIColor(white: 0.92, alpha: 1)
+        config.baseForegroundColor = UIColor(HexTheme.textBase)
         button.configuration = config
         button.accessibilityLabel = "Next keyboard"
         if let controller {
@@ -159,7 +159,6 @@ struct KeyboardSurfaceView: View {
         .padding(.bottom, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(HexTheme.bgDeep)
-        .preferredColorScheme(.dark)
     }
 
     @ViewBuilder

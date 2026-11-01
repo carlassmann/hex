@@ -41,7 +41,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func configureView() {
-        view.backgroundColor = UIColor(red: 0x0A / 255.0, green: 0x0B / 255.0, blue: 0x0D / 255.0, alpha: 1)
+        view.backgroundColor = UIColor(HexTheme.bgDeep)
         preferredContentSize.height = 148
 
         viewModel.inputViewController = self
@@ -157,6 +157,8 @@ final class KeyboardViewController: UIInputViewController {
 
     private func updateKeyboardTraits() {
         viewModel.needsGlobeKey = needsInputModeSwitchKey
+        // Fields that ask for a dark keyboard get one even in light mode, like the system keyboard.
+        overrideUserInterfaceStyle = textDocumentProxy.keyboardAppearance == .dark ? .dark : .unspecified
         switch textDocumentProxy.returnKeyType {
         case .send: viewModel.returnKeyLabel = "Send"
         case .search: viewModel.returnKeyLabel = "Search"

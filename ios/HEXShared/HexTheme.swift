@@ -1,21 +1,23 @@
 import SwiftUI
+import UIKit
 
 enum HexTheme {
-    // OpenCode dark palette — single cool-neutral temperature, tints via opacity.
-    static let bgDeep = Color(red: 0x0A / 255.0, green: 0x0B / 255.0, blue: 0x0D / 255.0)
-    static let bgBase = Color(red: 0x11 / 255.0, green: 0x13 / 255.0, blue: 0x16 / 255.0)
-    static let layer01 = Color(red: 0x17 / 255.0, green: 0x19 / 255.0, blue: 0x1D / 255.0)
-    static let layer02 = Color(red: 0x20 / 255.0, green: 0x23 / 255.0, blue: 0x29 / 255.0)
+    // OpenCode palette — single cool-neutral temperature, tints via opacity. The app stays
+    // dark; the keyboard follows the host's light or dark appearance.
+    static let bgDeep = adaptive(light: 0xD1D4D9, dark: 0x0A0B0D)
+    static let bgBase = adaptive(light: 0xE6E8EB, dark: 0x111316)
+    static let layer01 = adaptive(light: 0xFFFFFF, dark: 0x17191D)
+    static let layer02 = adaptive(light: 0xBCC0C7, dark: 0x202329)
 
-    static let textBase = Color.white.opacity(0.94)
-    static let textMuted = Color.white.opacity(0.56)
-    static let textFaint = Color.white.opacity(0.36)
+    static let textBase = adaptive(light: .black, dark: .white, opacity: 0.94, lightOpacity: 0.9)
+    static let textMuted = adaptive(light: .black, dark: .white, opacity: 0.56)
+    static let textFaint = adaptive(light: .black, dark: .white, opacity: 0.36)
 
-    static let borderWeak = Color.white.opacity(0.06)
-    static let borderStrong = Color.white.opacity(0.11)
+    static let borderWeak = adaptive(light: .black, dark: .white, opacity: 0.06)
+    static let borderStrong = adaptive(light: .black, dark: .white, opacity: 0.11)
 
-    static let bgContrast = Color.white.opacity(0.96)
-    static let textContrast = Color(red: 0x0A / 255.0, green: 0x0B / 255.0, blue: 0x0D / 255.0)
+    static let bgContrast = adaptive(light: 0x0A0B0D, dark: 0xF5F5F5)
+    static let textContrast = adaptive(light: 0xFFFFFF, dark: 0x0A0B0D)
 
     static let danger = Color(red: 0xE5 / 255.0, green: 0x4D / 255.0, blue: 0x42 / 255.0)
     static let dangerSurface = Color(red: 0xE5 / 255.0, green: 0x4D / 255.0, blue: 0x42 / 255.0).opacity(0.14)
@@ -24,6 +26,22 @@ enum HexTheme {
 
     static let cardRadius: CGFloat = 18
     static let controlRadius: CGFloat = 12
+
+    private static func adaptive(light: UInt32, dark: UInt32) -> Color {
+        Color(UIColor { traits in
+            UIColor(rgb: traits.userInterfaceStyle == .light ? light : dark)
+        })
+    }
+
+    private static func adaptive(
+        light: UIColor, dark: UIColor, opacity: CGFloat, lightOpacity: CGFloat? = nil
+    ) -> Color {
+        Color(UIColor { traits in
+            traits.userInterfaceStyle == .light
+                ? light.withAlphaComponent(lightOpacity ?? opacity)
+                : dark.withAlphaComponent(opacity)
+        })
+    }
 
     static func formatClock(_ seconds: TimeInterval) -> String {
         let clamped = max(0, Int(seconds))
@@ -40,6 +58,17 @@ enum HexTheme {
             return "\((clamped + 59) / 60)m"
         }
         return formatClock(TimeInterval(clamped))
+    }
+}
+
+private extension UIColor {
+    convenience init(rgb: UInt32) {
+        self.init(
+            red: CGFloat((rgb >> 16) & 0xFF) / 255,
+            green: CGFloat((rgb >> 8) & 0xFF) / 255,
+            blue: CGFloat(rgb & 0xFF) / 255,
+            alpha: 1
+        )
     }
 }
 

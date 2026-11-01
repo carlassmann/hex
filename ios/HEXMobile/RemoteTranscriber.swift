@@ -13,7 +13,15 @@ struct PairedHex: Codable, Equatable, Sendable {
 /// The paired Hex lives in the app's defaults; its device token only in the Keychain.
 enum PairedHexStore {
     private static let key = "remote.pairedHex"
+    private static let fallbackKey = "remote.fallsBackToDevice"
     private static let keychainService = "com.carlassmann.hex.remote"
+
+    /// Whether a dictation the paired Hex can't take is transcribed on this iPhone instead
+    /// of failing. On unless turned off.
+    static var fallsBackToDevice: Bool {
+        get { UserDefaults.standard.object(forKey: fallbackKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: fallbackKey) }
+    }
 
     static func load() -> (hex: PairedHex, token: String)? {
         guard let data = UserDefaults.standard.data(forKey: key),
@@ -135,7 +143,8 @@ enum RemoteHexPairing {
 
 /// Sends each recording to the paired Hex, which transcribes it with its own model and applies
 /// its Modes (an `iPhone` Mode there can clean up spoken self-corrections).
-/// Falls back to the on-device transcriber whenever that Hex doesn't answer in time.
+/// Falls back to the on-device transcriber whenever that Hex doesn't answer in time,
+/// unless that fallback is turned off.
 actor RemoteTranscriber: LocalTranscribing {
     nonisolated let displayName: String
 
@@ -170,6 +179,7 @@ actor RemoteTranscriber: LocalTranscribing {
         do {
             return try await transcribeRemotely(audioURL)
         } catch {
+            guard PairedHexStore.fallsBackToDevice else { throw Unavailable(name: hex.name) }
             NSLog("\(hex.name) unavailable, transcribing on device: \(error.localizedDescription)")
             return try await fallback.transcribe(audioURL)
         }
@@ -186,6 +196,11 @@ actor RemoteTranscriber: LocalTranscribing {
             throw URLError(.badServerResponse)
         }
         return try JSONDecoder().decode(Dictation.self, from: data).text
+    }
+
+    private struct Unavailable: LocalizedError {
+        let name: String
+        var errorDescription: String? { "\(name) didn't answer, so nothing was transcribed." }
     }
 
     private struct Dictation: Decodable {

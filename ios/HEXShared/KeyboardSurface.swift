@@ -23,6 +23,7 @@ final class KeyboardViewModel: ObservableObject {
     @Published var returnKeyLabel = "Return"
     @Published var snapshot: KeyboardSnapshot = .offline
     @Published var isModelInstalled = false
+    @Published var transcriberName: String?
     @Published var style: DictationStyle = .polished
     @Published var returnAppID: String?
     @Published var quickReturnApps: [HostApp] = HostAppCatalog.quickChips
@@ -435,7 +436,7 @@ struct KeyboardSurfaceView: View {
                 ProgressView()
                     .controlSize(.small)
                     .tint(HexTheme.textBase)
-                Text(model.isOptimisticStarting ? "Opening mic…" : "Transcribing on iPhone…")
+                Text(model.isOptimisticStarting ? "Opening mic…" : "Transcribing on \(model.transcriberName ?? "iPhone")…")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(HexTheme.textBase)
             }

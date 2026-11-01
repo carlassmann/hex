@@ -631,6 +631,7 @@ final class DictationController {
                 self.transcriber = candidate
                 self.transcriptionLanguage = await candidate.languageName
                 self.keyboardBridge.setModelInstalled(true)
+                self.keyboardBridge.transcriberName = (candidate as? RemoteTranscriber)?.displayName
                 self.isModelReady = true
                 self.phase = .ready
                 self.publishKeyboardSnapshot()

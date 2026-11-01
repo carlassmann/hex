@@ -101,6 +101,7 @@ final class KeyboardViewController: UIInputViewController {
         let snap = bridge.snapshot()
         viewModel.snapshot = snap
         viewModel.isModelInstalled = bridge.isModelInstalled
+        viewModel.transcriberName = bridge.transcriberName
         viewModel.style = bridge.style
         viewModel.returnAppID = bridge.returnAppID
         viewModel.quickReturnApps = bridge.quickReturnApps

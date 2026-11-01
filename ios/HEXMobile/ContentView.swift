@@ -875,6 +875,7 @@ private struct RemoteHexSection: View {
     @State private var code = ""
     @State private var pairing = false
     @State private var scanning = false
+    @State private var fallsBackToDevice = PairedHexStore.fallsBackToDevice
     @State private var failure: String?
 
     var body: some View {
@@ -888,6 +889,9 @@ private struct RemoteHexSection: View {
                     .foregroundStyle(failure == nil ? HexTheme.textFaint : .red)
             }
             if dictation.pairedHex != nil {
+                Toggle("Fall back to this iPhone", isOn: $fallsBackToDevice)
+                    .font(.system(size: 13))
+                    .onChange(of: fallsBackToDevice) { _, on in PairedHexStore.fallsBackToDevice = on }
                 Button("Unpair") { dictation.unpairHex() }
                     .font(.system(size: 13, weight: .medium))
             } else {
@@ -919,7 +923,9 @@ private struct RemoteHexSection: View {
     private var caption: String {
         if let failure { return failure }
         if let hex = dictation.pairedHex {
-            return "\(hex.name) transcribes with its model and Modes. Falls back to this iPhone when it doesn't answer."
+            return fallsBackToDevice
+                ? "\(hex.name) transcribes with its model and Modes. Falls back to this iPhone when it doesn't answer."
+                : "\(hex.name) transcribes with its model and Modes. When it doesn't answer, dictation fails."
         }
         return "Run hex remote pair on a Mac or PC in your tailnet, then scan its QR code or enter its address and code."
     }

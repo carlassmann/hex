@@ -300,6 +300,7 @@ struct KeyboardBridge {
     private enum Key {
         static let command = "keyboard.command"
         static let modelInstalled = "model.installed"
+        static let transcriberName = "model.transcriberName"
         static let snapshot = "keyboard.snapshot"
         static let warmDuration = "settings.warmDuration"
         static let style = "settings.dictationStyle"
@@ -371,6 +372,12 @@ struct KeyboardBridge {
         nonmutating set {
             defaults?.set(newValue.rawValue, forKey: Key.style)
         }
+    }
+
+    /// Where dictations are transcribed: a paired Hex's name, or nil for this iPhone.
+    var transcriberName: String? {
+        get { defaults?.string(forKey: Key.transcriberName) }
+        nonmutating set { defaults?.set(newValue, forKey: Key.transcriberName) }
     }
 
     var returnAppID: String? {

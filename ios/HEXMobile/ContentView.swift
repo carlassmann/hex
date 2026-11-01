@@ -880,7 +880,7 @@ private struct RemoteHexSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Transcribe on another Hex")
+                Text("Transcribe on a remote Hex")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(HexTheme.textBase)
                 Text(caption)

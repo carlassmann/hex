@@ -22,7 +22,7 @@ mod browser_media;
 mod calendar;
 #[cfg(hex_capture)]
 mod capture_host;
-#[cfg(target_os = "macos")]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod config;
 #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
 mod context;

@@ -17,6 +17,38 @@
   · <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
+> [!NOTE]
+> **This is Carl Assmann's fork** of [anomalyco/hex](https://github.com/anomalyco/hex).
+> Its changes live on `carl/dev`, which merges upstream `dev` every week.
+>
+> **Remote transcription.** Any desktop Hex can transcribe for your other
+> devices, so a phone or laptop uses a stronger machine's model and Modes
+> (cleanup, spoken self-corrections) over your tailnet.
+> - `hex remote pair` prints a QR code and a one-time code (five minutes,
+>   T3 Code-style). Paired devices get their own token; `hex remote devices`,
+>   `hex remote revoke <id>`, and `hex remote disable` manage them.
+> - Hex serves paired devices on `127.0.0.1:47831`; expose it with
+>   `tailscale serve --bg --https=47831 http://127.0.0.1:47831`.
+> - Code: `src/remote_pairing.rs`, `src/local_api/remote.rs`.
+>
+> **Synced word list.** Paired devices read and edit the desktop's Vocabulary
+> (`/remote/vocabulary`), so a word added on the phone helps every later
+> dictation on that machine.
+>
+> **iOS app** (`ios/`):
+> - Pair with a desktop Hex by scanning its QR code, and transcribe there. It
+>   falls back to on-device transcription unless you turn that off; the
+>   keyboard says where it transcribes.
+> - Select a word in any app and tap **Add to word list** on the Hex keyboard;
+>   the app syncs it to the paired Hex and lists the synced words.
+> - The keyboard follows light and dark mode.
+> - Choose and order the keyboard's return apps
+>   ([#668](https://github.com/anomalyco/hex/issues/668)).
+> - Signed with my own team, bundle IDs, and App Group.
+>
+> `relay/` is an earlier prototype of remote transcription, replaced by the
+> above.
+
 Hex is local-first voice dictation for Apple silicon Macs running macOS 15 or
 newer. Hold a shortcut, speak, and release. Hex transcribes on your Mac and
 pastes the result into the app you are using.

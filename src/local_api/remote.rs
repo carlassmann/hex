@@ -215,6 +215,13 @@ fn transcribe_and_process(
     let profiles = crate::config::build_dictation_profiles(&settings.dictation_processing);
     let processed =
         profiles.process_cancellable(&raw, &processing_context, &AtomicBool::new(false));
+    if let Some(fallback) = processed
+        .observation
+        .as_ref()
+        .and_then(|observation| observation.fallback.as_ref())
+    {
+        tracing::warn!(fallback, "remote dictation post-processing fell back to the transcript");
+    }
     tracing::info!(duration_ms, "remote dictation processed");
     Some(HttpResponse::json(
         200,

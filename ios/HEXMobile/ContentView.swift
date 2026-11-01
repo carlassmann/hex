@@ -500,6 +500,12 @@ struct ContentView: View {
 
             rowDivider
 
+            RemoteHexSection(dictation: dictation)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+
+            rowDivider
+
             Toggle(
                 isOn: Binding(
                     get: { dictation.allowBluetoothMic },
@@ -926,4 +932,92 @@ struct ContentView: View {
         openedFromKeyboard: .constant(false),
         showSetup: .constant(false)
     )
+}
+
+/// Pairs with a desktop Hex in the tailnet that then transcribes for this iPhone.
+private struct RemoteHexSection: View {
+    let dictation: DictationController
+    @State private var address = ""
+    @State private var code = ""
+    @State private var pairing = false
+    @State private var scanning = false
+    @State private var fallsBackToDevice = PairedHexStore.fallsBackToDevice
+    @State private var failure: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Transcribe on a remote Hex")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(HexTheme.textBase)
+                Text(caption)
+                    .font(.system(size: 12))
+                    .foregroundStyle(failure == nil ? HexTheme.textFaint : .red)
+            }
+            if dictation.pairedHex != nil {
+                Toggle("Fall back to this iPhone", isOn: $fallsBackToDevice)
+                    .font(.system(size: 13))
+                    .onChange(of: fallsBackToDevice) { _, on in PairedHexStore.fallsBackToDevice = on }
+                Button("Unpair") { dictation.unpairHex() }
+                    .font(.system(size: 13, weight: .medium))
+            } else {
+                if PairingScanner.isAvailable {
+                    Button("Scan QR code") { scanning = true }
+                        .font(.system(size: 13, weight: .medium))
+                        .disabled(pairing)
+                }
+                field("cbook.tailnet.ts.net:47831", text: $address, keyboard: .URL)
+                HStack(spacing: 8) {
+                    field("Code", text: $code, keyboard: .asciiCapable)
+                    Button(pairing ? "Pairing…" : "Pair", action: pair)
+                        .font(.system(size: 13, weight: .medium))
+                        .disabled(pairing || address.isEmpty || code.isEmpty)
+                }
+            }
+        }
+        .sheet(isPresented: $scanning) {
+            PairingScanner { scannedAddress, scannedCode in
+                scanning = false
+                address = scannedAddress
+                code = scannedCode
+                pair()
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    private var caption: String {
+        if let failure { return failure }
+        if let hex = dictation.pairedHex {
+            return fallsBackToDevice
+                ? "\(hex.name) transcribes with its model and Modes. Falls back to this iPhone when it doesn't answer."
+                : "\(hex.name) transcribes with its model and Modes. When it doesn't answer, dictation fails."
+        }
+        return "Run hex remote pair on a Mac or PC in your tailnet, then scan its QR code or enter its address and code."
+    }
+
+    private func field(_ placeholder: String, text: Binding<String>, keyboard: UIKeyboardType) -> some View {
+        TextField(placeholder, text: text)
+            .font(.system(size: 13))
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .keyboardType(keyboard)
+            .padding(.horizontal, 11)
+            .frame(height: 32)
+            .background(HexTheme.layer02, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func pair() {
+        pairing = true
+        failure = nil
+        Task {
+            do {
+                try await dictation.pairWithHex(address: address, code: code)
+                code = ""
+            } catch {
+                failure = error.localizedDescription
+            }
+            pairing = false
+        }
+    }
 }

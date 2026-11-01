@@ -200,6 +200,10 @@ final class KeyboardViewController: UIInputViewController {
         if viewModel.quickReturnApps != quickReturnApps {
             viewModel.quickReturnApps = quickReturnApps
         }
+        let transcriberName = bridge.transcriberName
+        if viewModel.transcriberName != transcriberName {
+            viewModel.transcriberName = transcriberName
+        }
 
         viewModel.applyBridgeState(
             hasFullAccess: true,

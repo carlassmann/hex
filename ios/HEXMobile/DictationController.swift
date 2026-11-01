@@ -122,6 +122,7 @@ final class DictationController {
     private(set) var style: DictationStyle
     private(set) var returnAppID: String?
     private(set) var quickReturnApps: [HostApp]
+    private(set) var pairedHex: PairedHex?
     private(set) var allowBluetoothMic: Bool
     private(set) var autoReturnState: AutoReturnState = .idle
     private(set) var handoffNotice: String?
@@ -149,13 +150,16 @@ final class DictationController {
         self.audio = resolvedAudio
         self.keyboardBridge = resolvedBridge
         self.transcriber = initialTranscriber
-        self.transcriberFactory = transcriberFactory ?? Self.defaultTranscriber
+        self.transcriberFactory = transcriberFactory ?? {
+            await Self.defaultTranscriber(paired: PairedHexStore.load())
+        }
         self.fileManager = fileManager
         self.now = now
         self.warmDuration = resolvedBridge.warmDuration
         self.style = resolvedBridge.style
         self.returnAppID = resolvedBridge.returnAppID
         self.quickReturnApps = resolvedBridge.quickReturnApps
+        self.pairedHex = PairedHexStore.load()?.hex
         self.allowBluetoothMic = resolvedBridge.allowBluetoothMic
         self.defaultURLOpener = urlOpener ?? { url in
             await UIApplication.shared.open(url)
@@ -253,6 +257,24 @@ final class DictationController {
         let normalized = (id?.isEmpty == true) ? nil : id
         returnAppID = normalized
         keyboardBridge.returnAppID = normalized
+    }
+
+    /// Pairs with a desktop Hex (`hex remote pair` there), which then transcribes for this iPhone.
+    func pairWithHex(address: String, code: String) async throws {
+        pairedHex = try await RemoteHexPairing.pair(address: address, code: code)
+        reloadTranscriberIfIdle()
+    }
+
+    func unpairHex() {
+        PairedHexStore.forget()
+        pairedHex = nil
+        reloadTranscriberIfIdle()
+    }
+
+    private func reloadTranscriberIfIdle() {
+        if phase == .ready || isFailedPhase {
+            prepareModel()
+        }
     }
 
     /// Unticking the saved return app also forgets it, so the ↩ chip only ever names an app in the list.
@@ -649,6 +671,7 @@ final class DictationController {
                 self.transcriber = candidate
                 self.transcriptionLanguage = await candidate.languageName
                 self.keyboardBridge.setModelInstalled(true)
+                self.keyboardBridge.transcriberName = (candidate as? RemoteTranscriber)?.displayName
                 self.isModelReady = true
                 self.phase = .ready
                 self.publishKeyboardSnapshot()
@@ -665,7 +688,13 @@ final class DictationController {
         }
     }
 
-    private static func defaultTranscriber() async -> any LocalTranscribing {
+    private static func defaultTranscriber(paired: (hex: PairedHex, token: String)?) async -> any LocalTranscribing {
+        let onDevice = await onDeviceTranscriber()
+        guard let paired else { return onDevice }
+        return RemoteTranscriber(hex: paired.hex, token: paired.token, fallback: onDevice)
+    }
+
+    private static func onDeviceTranscriber() async -> any LocalTranscribing {
         if #available(iOS 26.0, *),
            AppleSpeechTranscriber.isAvailable,
            let locale = await AppleSpeechTranscriber.preferredLocale() {

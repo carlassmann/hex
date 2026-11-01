@@ -307,6 +307,7 @@ struct KeyboardBridge {
     private enum Key {
         static let command = "keyboard.command"
         static let modelInstalled = "model.installed"
+        static let transcriberName = "model.transcriberName"
         static let snapshot = "keyboard.snapshot"
         static let warmDuration = "settings.warmDuration"
         static let style = "settings.dictationStyle"
@@ -380,6 +381,12 @@ struct KeyboardBridge {
         }
     }
 
+    /// Where dictations are transcribed: a paired Hex's name, or nil for this iPhone.
+    var transcriberName: String? {
+        get { defaults?.string(forKey: Key.transcriberName) }
+        nonmutating set { defaults?.set(newValue, forKey: Key.transcriberName) }
+    }
+
     var returnAppID: String? {
         get {
             let value = defaults?.string(forKey: Key.returnAppID)
@@ -397,6 +404,7 @@ struct KeyboardBridge {
     var returnApp: HostApp? {
         HostAppCatalog.app(for: returnAppID)
     }
+
 
     /// The apps the keyboard offers to jump back to, in the user's order.
     var quickReturnApps: [HostApp] {

@@ -58,6 +58,8 @@ final class KeyboardViewModel: ObservableObject {
     @Published var style: DictationStyle = .polished
     @Published var returnAppID: String?
     @Published var quickReturnApps: [HostApp] = HostAppCatalog.quickChips
+    /// The paired Hex that transcribes, or nil when this iPhone does.
+    @Published var transcriberName: String?
     @Published var activeTray: PickerTray = .none
 
     // Non-published live telemetry read directly by `DotScopeHostView` / button tap handlers
@@ -601,6 +603,7 @@ struct KeyboardSurfaceView: View {
             && !model.isWarmAvailable
             && model.stagePhase != .recording
             && model.stagePhase != .transcribing
+        let showTranscriber = model.hasFullAccess && model.stagePhase == .transcribing
 
         return ZStack(alignment: .leading) {
             HStack(spacing: 6) {
@@ -620,6 +623,12 @@ struct KeyboardSurfaceView: View {
                 KeyboardRecordingClockText(clock: model.clock, color: p.textBase)
             }
             .hexTrayReveal(showRecordingClock, reduceMotion: reduceMotion, offsetY: 2)
+
+            Text("Transcribing on \(model.transcriberName ?? "iPhone")")
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(p.textMuted)
+                .lineLimit(1)
+                .hexTrayReveal(showTranscriber, reduceMotion: reduceMotion, offsetY: 2)
 
             Group {
                 if let message = model.statusMessage {

@@ -874,6 +874,7 @@ private struct RemoteHexSection: View {
     @State private var address = ""
     @State private var code = ""
     @State private var pairing = false
+    @State private var scanning = false
     @State private var failure: String?
 
     var body: some View {
@@ -890,6 +891,11 @@ private struct RemoteHexSection: View {
                 Button("Unpair") { dictation.unpairHex() }
                     .font(.system(size: 13, weight: .medium))
             } else {
+                if PairingScanner.isAvailable {
+                    Button("Scan QR code") { scanning = true }
+                        .font(.system(size: 13, weight: .medium))
+                        .disabled(pairing)
+                }
                 field("cbook.tailnet.ts.net:47831", text: $address, keyboard: .URL)
                 HStack(spacing: 8) {
                     field("Code", text: $code, keyboard: .asciiCapable)
@@ -899,6 +905,15 @@ private struct RemoteHexSection: View {
                 }
             }
         }
+        .sheet(isPresented: $scanning) {
+            PairingScanner { scannedAddress, scannedCode in
+                scanning = false
+                address = scannedAddress
+                code = scannedCode
+                pair()
+            }
+            .ignoresSafeArea()
+        }
     }
 
     private var caption: String {
@@ -906,7 +921,7 @@ private struct RemoteHexSection: View {
         if let hex = dictation.pairedHex {
             return "\(hex.name) transcribes with its model and Modes. Falls back to this iPhone when it doesn't answer."
         }
-        return "Run hex remote pair on a Mac or PC in your tailnet, then enter its address and code."
+        return "Run hex remote pair on a Mac or PC in your tailnet, then scan its QR code or enter its address and code."
     }
 
     private func field(_ placeholder: String, text: Binding<String>, keyboard: UIKeyboardType) -> some View {

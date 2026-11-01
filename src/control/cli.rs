@@ -393,13 +393,19 @@ fn remote_command(command: RemoteCli) -> color_eyre::Result<u8> {
             let port = remote_pairing::port();
             let host =
                 remote_pairing::tailscale_dns_name().unwrap_or_else(remote_pairing::machine_label);
-            println!("Pair a device with {}:", remote_pairing::machine_label());
+            let link = format!("hex-dictation://pair?host={host}:{port}&code={code}");
+            println!(
+                "Scan with Hex on your iPhone to pair with {}:",
+                remote_pairing::machine_label()
+            );
             println!();
+            println!("{}", pairing_qr(&link)?);
+            println!("Or enter:");
             println!("  Address  {host}:{port}");
             println!("  Code     {}-{}", &code[..6], &code[6..]);
             println!();
             println!("The code works once, for five minutes.");
-            println!("hex-dictation://pair?host={host}:{port}&code={code}");
+            println!("{link}");
             if !was_enabled {
                 println!();
                 println!("Restart Hex to start serving devices (hex restart).");
@@ -434,6 +440,18 @@ fn remote_command(command: RemoteCli) -> color_eyre::Result<u8> {
             Ok(0)
         }
     }
+}
+
+/// Half-height blocks keep the code small enough for a terminal; dark modules print as
+/// light so phones read it on the usual dark terminal background.
+fn pairing_qr(link: &str) -> color_eyre::Result<String> {
+    use qrcode::render::unicode::Dense1x2;
+    Ok(qrcode::QrCode::new(link)?
+        .render::<Dense1x2>()
+        .dark_color(Dense1x2::Light)
+        .light_color(Dense1x2::Dark)
+        .quiet_zone(true)
+        .build())
 }
 
 pub fn finish(code: u8) -> ! {

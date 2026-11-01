@@ -10,11 +10,17 @@
 //!   with this machine's selected model and processed by its Modes, as if it
 //!   were dictated here into an app named after the device (`X-Hex-Application`,
 //!   default the device's label), so a mode can target it.
+//! - `GET /remote/vocabulary`: this machine's word list, `{terms}`.
+//! - `POST /remote/vocabulary` `{term, soundsLike?}` adds a word (or spellings);
+//!   `POST /remote/vocabulary/remove` `{term}` removes one. Both answer the new
+//!   `{terms, changed}`, and apply from the next dictation on.
 
 use std::net::TcpStream;
 use std::sync::atomic::AtomicBool;
 
 use serde::{Deserialize, Serialize};
+
+use crate::control::{ControlCall, ControlCommand, ControlReply, ControlRequest};
 
 use super::{
     HttpContext, HttpRequest, HttpResponse, RequestAction, UPLOAD_DEADLINE, read_audio,
@@ -22,6 +28,7 @@ use super::{
 };
 
 const MAX_PAIR_BYTES: usize = 1024;
+const MAX_VOCABULARY_EDIT_BYTES: usize = 4096;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,6 +53,28 @@ struct PairResponse {
     machine_label: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VocabularyEdit {
+    term: String,
+    #[serde(default)]
+    sounds_like: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VocabularyTerm {
+    term: String,
+    sounds_like: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct VocabularyResponse {
+    terms: Vec<VocabularyTerm>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    changed: Option<bool>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DictationResponse {
@@ -63,6 +92,12 @@ pub(super) fn handle_request(request: HttpRequest, _context: &HttpContext) -> Re
             body_prefix: request.body_prefix,
         },
         ("POST", "/remote/dictations") => dictation_action(request),
+        ("GET", "/remote/vocabulary") => match paired_device(&request) {
+            Some(_) => RequestAction::Respond(vocabulary(None)),
+            None => RequestAction::Respond(HttpResponse::code(401, "not-paired")),
+        },
+        ("POST", "/remote/vocabulary") => vocabulary_action(request, false),
+        ("POST", "/remote/vocabulary/remove") => vocabulary_action(request, true),
         _ => RequestAction::Respond(HttpResponse::code(404, "not-found")),
     }
 }
@@ -84,12 +119,16 @@ fn machine() -> HttpResponse {
     }
 }
 
-fn dictation_action(request: HttpRequest) -> RequestAction {
-    let token = request
+fn paired_device(request: &HttpRequest) -> Option<crate::remote_pairing::Device> {
+    request
         .authorization
         .as_deref()
-        .and_then(|value| value.strip_prefix("Bearer "));
-    let Some(device) = token.and_then(crate::remote_pairing::device_for_token) else {
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .and_then(crate::remote_pairing::device_for_token)
+}
+
+fn dictation_action(request: HttpRequest) -> RequestAction {
+    let Some(device) = paired_device(&request) else {
         return RequestAction::Respond(HttpResponse::code(401, "not-paired"));
     };
     if !request.has_content_type("audio/wav") {
@@ -235,4 +274,93 @@ fn transcribe_and_process(
             duration_ms,
         },
     ))
+}
+
+fn vocabulary_action(request: HttpRequest, remove: bool) -> RequestAction {
+    if paired_device(&request).is_none() {
+        return RequestAction::Respond(HttpResponse::code(401, "not-paired"));
+    }
+    RequestAction::RemoteVocabulary {
+        remove,
+        content_length: request.content_length.unwrap_or(0),
+        body_prefix: request.body_prefix,
+    }
+}
+
+fn vocabulary(changed: Option<bool>) -> HttpResponse {
+    let terms = crate::dictation::vocabulary::entries()
+        .into_iter()
+        .map(|entry| VocabularyTerm {
+            term: entry.term,
+            sounds_like: entry.sounds_like,
+        })
+        .collect();
+    HttpResponse::json(200, &VocabularyResponse { terms, changed })
+}
+
+pub(super) fn edit_vocabulary(
+    stream: &mut TcpStream,
+    remove: bool,
+    content_length: usize,
+    mut body: Vec<u8>,
+    context: &HttpContext,
+) {
+    let response = match read_body_bounded(
+        stream,
+        content_length,
+        &mut body,
+        &context.shutdown,
+        MAX_VOCABULARY_EDIT_BYTES,
+        UPLOAD_DEADLINE,
+    ) {
+        Err(_) => HttpResponse::code(400, "invalid-request"),
+        Ok(()) => match serde_json::from_slice::<VocabularyEdit>(&body) {
+            Err(_) => HttpResponse::code(400, "invalid-request"),
+            Ok(edit) => {
+                let command = if remove {
+                    ControlCommand::VocabularyRemove { term: edit.term }
+                } else {
+                    ControlCommand::VocabularyAdd {
+                        term: edit.term,
+                        sounds_like: edit.sounds_like,
+                    }
+                };
+                match run_vocabulary_edit(command, context) {
+                    Ok(ControlReply::Done { changed, .. }) => vocabulary(Some(changed)),
+                    Ok(ControlReply::Error { code, .. }) if code == "invalid-value" => {
+                        HttpResponse::code(400, "invalid-term")
+                    }
+                    Ok(_) | Err(()) => HttpResponse::code(500, "vocabulary-unavailable"),
+                }
+            }
+        },
+    };
+    let _ = write_response(stream, response);
+}
+
+/// Edits the list the way `hex vocabulary add|remove` does, so a running Hex
+/// window adopts it; a headless `hex service` has no control host and edits
+/// the saved settings itself.
+fn run_vocabulary_edit(command: ControlCommand, context: &HttpContext) -> Result<ControlReply, ()> {
+    let Some(controls) = &context.control else {
+        let mut settings = crate::app_settings::AppSettings::load().map_err(|_| ())?;
+        let reply = match crate::control::edit_vocabulary(&mut settings.vocabulary, &command) {
+            Ok(reply) => reply,
+            Err(error) => return Ok(ControlReply::from(error)),
+        };
+        if matches!(reply, ControlReply::Done { changed: true, .. }) {
+            settings.save().map_err(|_| ())?;
+        }
+        return Ok(reply);
+    };
+    let request = ControlRequest::new(command);
+    let deadline = request.command.deadline();
+    let (reply, response) = std::sync::mpsc::sync_channel(1);
+    controls
+        .try_send(ControlCall { request, reply })
+        .map_err(|_| ())?;
+    response
+        .recv_timeout(deadline)
+        .map(|response| response.reply)
+        .map_err(|_| ())
 }

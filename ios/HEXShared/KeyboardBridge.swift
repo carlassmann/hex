@@ -308,6 +308,7 @@ struct KeyboardBridge {
         static let command = "keyboard.command"
         static let modelInstalled = "model.installed"
         static let transcriberName = "model.transcriberName"
+        static let pendingWords = "vocabulary.pendingWords"
         static let snapshot = "keyboard.snapshot"
         static let warmDuration = "settings.warmDuration"
         static let style = "settings.dictationStyle"
@@ -417,6 +418,23 @@ struct KeyboardBridge {
         nonmutating set {
             defaults?.set(newValue.map(\.id), forKey: Key.quickReturnAppIDs)
         }
+    }
+
+    /// Words the keyboard added to the word list that the app hasn't synced to the
+    /// paired Hex yet.
+    var pendingWords: [String] {
+        defaults?.stringArray(forKey: Key.pendingWords) ?? []
+    }
+
+    func queueWord(_ word: String) {
+        let queued = pendingWords
+        guard !queued.contains(where: { $0.caseInsensitiveCompare(word) == .orderedSame }) else { return }
+        defaults?.set(queued + [word], forKey: Key.pendingWords)
+    }
+
+    /// Drops the words that were synced, keeping any the keyboard queued meanwhile.
+    func removePendingWords(_ synced: [String]) {
+        defaults?.set(pendingWords.filter { !synced.contains($0) }, forKey: Key.pendingWords)
     }
 
     var allowBluetoothMic: Bool {

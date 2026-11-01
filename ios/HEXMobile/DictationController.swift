@@ -123,6 +123,7 @@ final class DictationController {
     private(set) var returnAppID: String?
     private(set) var quickReturnApps: [HostApp]
     private(set) var pairedHex: PairedHex?
+    let wordList: RemoteWordList
     private(set) var allowBluetoothMic: Bool
     private(set) var autoReturnState: AutoReturnState = .idle
     private(set) var handoffNotice: String?
@@ -160,6 +161,7 @@ final class DictationController {
         self.returnAppID = resolvedBridge.returnAppID
         self.quickReturnApps = resolvedBridge.quickReturnApps
         self.pairedHex = PairedHexStore.load()?.hex
+        self.wordList = RemoteWordList(keyboardBridge: resolvedBridge)
         self.allowBluetoothMic = resolvedBridge.allowBluetoothMic
         self.defaultURLOpener = urlOpener ?? { url in
             await UIApplication.shared.open(url)
@@ -263,11 +265,13 @@ final class DictationController {
     func pairWithHex(address: String, code: String) async throws {
         pairedHex = try await RemoteHexPairing.pair(address: address, code: code)
         reloadTranscriberIfIdle()
+        await wordList.sync()
     }
 
     func unpairHex() {
         PairedHexStore.forget()
         pairedHex = nil
+        wordList.clear()
         reloadTranscriberIfIdle()
     }
 
@@ -967,6 +971,9 @@ final class DictationController {
                 self.consumeKeyboardCommand()
                 if self.phase != .recording {
                     self.publishKeyboardSnapshot(minInterval: 0.60)
+                }
+                if !self.keyboardBridge.pendingWords.isEmpty {
+                    Task { await self.wordList.sync() }
                 }
                 try? await Task.sleep(for: .milliseconds(100))
             }

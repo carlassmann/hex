@@ -16,6 +16,7 @@ use crate::desktop::events::{EventLog, VoiceEvent, now_ms};
 mod dictation;
 mod discovery;
 mod http;
+mod remote;
 mod streams;
 
 #[cfg(debug_assertions)]
@@ -50,6 +51,7 @@ type ModelPreparer =
 pub struct LocalApi {
     shutdown: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
+    remote_worker: Option<JoinHandle<()>>,
     discovery: Option<DiscoveryLease>,
     document: DiscoveryDocument,
     events: EventLog,
@@ -120,12 +122,18 @@ pub struct LocalApiOptions {
     /// Where `/streams` finds its engine; the running app's shared engine
     /// when unset.
     pub(crate) stream_engine: Option<crate::transcription::stream::EngineSource>,
+    /// Also serve paired devices on `remote_pairing::port()`.
+    pub remote: bool,
 }
 
 impl LocalApi {
     /// Start the one app-owned local API and publish its discovery document.
     pub fn start(events: EventLog, options: LocalApiOptions) -> Result<Self> {
         let instance = crate::desktop::instance::acquire("local-api")?;
+        let options = LocalApiOptions {
+            remote: options.remote || crate::remote_pairing::enabled(),
+            ..options
+        };
         Self::start_bound(
             Some(crate::app_paths::local_api_discovery_file()?),
             Arc::new(current_health),
@@ -227,11 +235,16 @@ impl LocalApi {
                 .stream_engine
                 .unwrap_or_else(|| Arc::new(crate::transcription::stream::shared_engine)),
         };
+        let http_context = Arc::new(http_context);
+        let remote_worker = options
+            .remote
+            .then(|| start_remote(http_context.clone()))
+            .flatten();
         let (ready, readiness) = mpsc::sync_channel(1);
         let worker = thread::Builder::new()
             .name("local-api".into())
             .spawn(move || {
-                serve(listener, http_context, ready);
+                serve(listener, http_context, handle_request, ready);
                 if !unexpected_shutdown.load(Ordering::Acquire) {
                     if let Some((path, document)) = worker_discovery {
                         remove_discovery_if_owned(&path, &document);
@@ -246,6 +259,9 @@ impl LocalApi {
             Ok(false) | Err(_) => {
                 shutdown.store(true, Ordering::Release);
                 let _ = worker.join();
+                if let Some(remote_worker) = remote_worker {
+                    let _ = remote_worker.join();
+                }
                 bail!("local API HTTP workers could not start");
             }
         }
@@ -259,6 +275,7 @@ impl LocalApi {
         Ok(Self {
             shutdown,
             worker: Some(worker),
+            remote_worker,
             discovery,
             document,
             events,
@@ -290,6 +307,11 @@ impl LocalApi {
         self.shutdown.store(true, Ordering::Release);
         if worker.join().is_err() {
             tracing::error!("local API thread panicked during shutdown");
+        }
+        if let Some(remote_worker) = self.remote_worker.take()
+            && remote_worker.join().is_err()
+        {
+            tracing::error!("remote listener panicked during shutdown");
         }
         if let Some(mut service) = self.transcription_service.take() {
             service.shutdown();
@@ -384,18 +406,45 @@ fn observe_stopped(events: &EventLog, observed: &AtomicBool) {
     }
 }
 
-fn serve(listener: TcpListener, context: HttpContext, ready: mpsc::SyncSender<bool>) {
+type Router = fn(HttpRequest, &HttpContext) -> RequestAction;
+
+/// The remote listener for paired devices; Hex runs on without it.
+fn start_remote(context: Arc<HttpContext>) -> Option<JoinHandle<()>> {
+    let port = crate::remote_pairing::port();
+    let listener = TcpListener::bind(("127.0.0.1", port))
+        .and_then(|listener| listener.set_nonblocking(true).map(|()| listener))
+        .inspect_err(|error| tracing::warn!(%error, port, "remote listener is unavailable"))
+        .ok()?;
+    let (ready, readiness) = mpsc::sync_channel(1);
+    let worker = thread::Builder::new()
+        .name("remote-api".into())
+        .spawn(move || serve(listener, context, remote::handle_request, ready))
+        .inspect_err(|error| tracing::warn!(%error, "could not start the remote listener"))
+        .ok()?;
+    if readiness.recv_timeout(Duration::from_secs(1)) != Ok(true) {
+        tracing::warn!("remote listener has no HTTP workers");
+        return None;
+    }
+    tracing::info!(port, "remote listener started");
+    Some(worker)
+}
+
+fn serve(
+    listener: TcpListener,
+    context: Arc<HttpContext>,
+    route: Router,
+    ready: mpsc::SyncSender<bool>,
+) {
     let (connections, pending) = mpsc::sync_channel(CONNECTION_QUEUE_CAPACITY);
     let pending = Arc::new(Mutex::new(pending));
     let shutdown = context.shutdown.clone();
-    let context = Arc::new(context);
     let workers = (0..HTTP_WORKERS)
         .filter_map(|index| {
             let pending = pending.clone();
             let context = context.clone();
             thread::Builder::new()
                 .name(format!("local-api-http-{index}"))
-                .spawn(move || http_worker(pending, context))
+                .spawn(move || http_worker(pending, context, route))
                 .map_err(|error| {
                     tracing::error!(%error, "could not start local API HTTP worker");
                 })
@@ -454,7 +503,7 @@ fn serve(listener: TcpListener, context: HttpContext, ready: mpsc::SyncSender<bo
     }
 }
 
-fn http_worker(pending: Arc<Mutex<Receiver<TcpStream>>>, context: Arc<HttpContext>) {
+fn http_worker(pending: Arc<Mutex<Receiver<TcpStream>>>, context: Arc<HttpContext>, route: Router) {
     loop {
         let stream = pending
             .lock()
@@ -473,7 +522,7 @@ fn http_worker(pending: Arc<Mutex<Receiver<TcpStream>>>, context: Arc<HttpContex
             continue;
         }
         let action = match read_request(&mut stream, &context.shutdown) {
-            Ok(request) => handle_request(request, &context),
+            Ok(request) => route(request, &context),
             Err(RequestReadError::TooLarge) => RequestAction::Respond(HttpResponse::empty(431)),
             Err(RequestReadError::Invalid) => RequestAction::Respond(HttpResponse::empty(400)),
             Err(RequestReadError::Deadline) => RequestAction::Respond(HttpResponse::empty(408)),
@@ -567,6 +616,21 @@ fn http_worker(pending: Arc<Mutex<Receiver<TcpStream>>>, context: Arc<HttpContex
                 dictation::handle(&mut stream, id, owner_token, action, &context);
             }
             RequestAction::Stream(action) => streams::handle(&mut stream, action, &context),
+            RequestAction::RemotePair {
+                content_length,
+                body_prefix,
+            } => remote::pair(&mut stream, content_length, body_prefix, &context),
+            RequestAction::RemoteDictation {
+                application,
+                content_length,
+                body_prefix,
+            } => remote::dictate(
+                &mut stream,
+                application,
+                content_length,
+                body_prefix,
+                &context,
+            ),
         }
     }
 }
@@ -703,16 +767,7 @@ fn transcription_action(
             return RequestAction::Respond(HttpResponse::code(400, code));
         }
     };
-    let model = crate::transcription::models::definition(selection.model);
-    let prepared = match model.runtime {
-        crate::transcription::models::ModelRuntime::Gguf(_) => {
-            crate::transcription::models::is_verified(model)
-        }
-        crate::transcription::models::ModelRuntime::AppleSpeech => {
-            crate::transcription::models::is_installed(model, &selection.language)
-        }
-    };
-    if !prepared {
+    if !model_ready(&selection) {
         return RequestAction::Respond(HttpResponse::code(409, "model-not-ready"));
     }
     let Some(admission) = transcription.admit_audio() else {
@@ -723,6 +778,18 @@ fn transcription_action(
         content_length,
         body_prefix: request.body_prefix,
         admission,
+    }
+}
+
+fn model_ready(selection: &crate::transcription::models::TranscriptionSelection) -> bool {
+    let model = crate::transcription::models::definition(selection.model);
+    match model.runtime {
+        crate::transcription::models::ModelRuntime::Gguf(_) => {
+            crate::transcription::models::is_verified(model)
+        }
+        crate::transcription::models::ModelRuntime::AppleSpeech => {
+            crate::transcription::models::is_installed(model, &selection.language)
+        }
     }
 }
 
@@ -938,11 +1005,35 @@ fn transcribe_audio(
     stream: &mut TcpStream,
     selection: crate::transcription::models::TranscriptionSelection,
     content_length: usize,
-    mut body: Vec<u8>,
+    body: Vec<u8>,
     transcription: &crate::transcription::service::TranscriptionServiceHandle,
     shutdown: &AtomicBool,
     admission: crate::transcription::service::AudioAdmission,
 ) -> Option<HttpResponse> {
+    let clip = match read_audio(stream, content_length, body, shutdown) {
+        Ok(clip) => clip,
+        Err(response) => return response,
+    };
+    let duration_ms = clip.duration_ms;
+    match wait_for_transcript(stream, selection, clip, admission, transcription, shutdown) {
+        Ok(transcript) => Some(HttpResponse::json(
+            200,
+            &serde_json::json!({
+                "transcript": transcript,
+                "durationMs": duration_ms,
+            }),
+        )),
+        Err(response) => response,
+    }
+}
+
+/// Reads and decodes an uploaded WAV; `Err(None)` means Hex is shutting down.
+fn read_audio(
+    stream: &mut TcpStream,
+    content_length: usize,
+    mut body: Vec<u8>,
+    shutdown: &AtomicBool,
+) -> std::result::Result<crate::transcription::service::AudioClip, Option<HttpResponse>> {
     if let Err(error) = read_body_bounded(
         stream,
         content_length,
@@ -951,50 +1042,52 @@ fn transcribe_audio(
         MAX_AUDIO_BYTES,
         UPLOAD_DEADLINE,
     ) {
-        return Some(match error {
-            BodyReadError::ResourceExhausted => HttpResponse::code(413, "resource-exhausted"),
-            BodyReadError::Invalid => HttpResponse::code(400, "invalid-audio"),
+        return Err(match error {
+            BodyReadError::ResourceExhausted => Some(HttpResponse::code(413, "resource-exhausted")),
+            BodyReadError::Invalid => Some(HttpResponse::code(400, "invalid-audio")),
             BodyReadError::Io(error) => {
                 tracing::debug!(%error, "audio upload stopped before completion");
-                HttpResponse::code(400, "invalid-audio")
+                Some(HttpResponse::code(400, "invalid-audio"))
             }
-            BodyReadError::Deadline => HttpResponse::code(408, "upload-timeout"),
-            BodyReadError::Shutdown => return None,
+            BodyReadError::Deadline => Some(HttpResponse::code(408, "upload-timeout")),
+            BodyReadError::Shutdown => None,
         });
     }
-    let clip = match crate::transcription::service::AudioClip::decode_wav(Cursor::new(body)) {
-        Ok(clip) => clip,
-        Err(crate::transcription::service::AudioError::ResourceExhausted) => {
-            return Some(HttpResponse::code(413, "resource-exhausted"));
-        }
-        Err(crate::transcription::service::AudioError::Unsupported) => {
-            return Some(HttpResponse::code(415, "unsupported-audio"));
-        }
-        Err(crate::transcription::service::AudioError::Invalid) => {
-            return Some(HttpResponse::code(400, "invalid-audio"));
-        }
-    };
-    let duration_ms = clip.duration_ms;
-    let job = match transcription.transcribe(selection, clip, admission) {
-        Ok(job) => job,
-        Err(error) => return Some(transcription_error(error)),
-    };
+    crate::transcription::service::AudioClip::decode_wav(Cursor::new(body)).map_err(|error| {
+        Some(match error {
+            crate::transcription::service::AudioError::ResourceExhausted => {
+                HttpResponse::code(413, "resource-exhausted")
+            }
+            crate::transcription::service::AudioError::Unsupported => {
+                HttpResponse::code(415, "unsupported-audio")
+            }
+            crate::transcription::service::AudioError::Invalid => {
+                HttpResponse::code(400, "invalid-audio")
+            }
+        })
+    })
+}
+
+/// Transcribes `clip`; `Err(None)` means the client left or Hex is shutting down.
+fn wait_for_transcript(
+    stream: &TcpStream,
+    selection: crate::transcription::models::TranscriptionSelection,
+    clip: crate::transcription::service::AudioClip,
+    admission: crate::transcription::service::AudioAdmission,
+    transcription: &crate::transcription::service::TranscriptionServiceHandle,
+    shutdown: &AtomicBool,
+) -> std::result::Result<String, Option<HttpResponse>> {
+    let job = transcription
+        .transcribe(selection, clip, admission)
+        .map_err(|error| Some(transcription_error(error)))?;
     loop {
         match job.wait_timeout(TRANSCRIPTION_POLL_INTERVAL) {
-            Ok(Some(Ok(transcript))) => {
-                return Some(HttpResponse::json(
-                    200,
-                    &serde_json::json!({
-                        "transcript": transcript,
-                        "durationMs": duration_ms,
-                    }),
-                ));
-            }
-            Ok(Some(Err(error))) | Err(error) => return Some(transcription_error(error)),
+            Ok(Some(Ok(transcript))) => return Ok(transcript),
+            Ok(Some(Err(error))) | Err(error) => return Err(Some(transcription_error(error))),
             Ok(None) => {
                 if shutdown.load(Ordering::Acquire) || client_aborted(stream) {
                     job.cancel();
-                    return None;
+                    return Err(None);
                 }
             }
         }
@@ -1318,6 +1411,15 @@ enum RequestAction {
         action: DictationAction,
     },
     Stream(streams::StreamAction),
+    RemotePair {
+        content_length: usize,
+        body_prefix: Vec<u8>,
+    },
+    RemoteDictation {
+        application: String,
+        content_length: usize,
+        body_prefix: Vec<u8>,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2019,6 +2121,7 @@ mod tests {
                 authorization: None,
                 dictation_token: None,
                 stream_token: None,
+                remote_application: None,
                 content_type: Some("audio/webm".into()),
                 content_length: Some(10),
                 body_prefix: Vec::new(),
@@ -2037,6 +2140,7 @@ mod tests {
                 authorization: None,
                 dictation_token: None,
                 stream_token: None,
+                remote_application: None,
                 content_type: Some("audio/wav".into()),
                 content_length: Some(MAX_AUDIO_BYTES + 1),
                 body_prefix: Vec::new(),
@@ -2078,6 +2182,7 @@ mod tests {
                 authorization: Some("Bearer test-token".into()),
                 dictation_token: None,
                 stream_token: None,
+                remote_application: None,
                 content_type: None,
                 content_length: None,
                 body_prefix: Vec::new(),

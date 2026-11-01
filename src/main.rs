@@ -53,6 +53,7 @@ mod paste;
 mod personal_commands;
 #[cfg(target_os = "macos")]
 mod recognition;
+mod remote_pairing;
 mod rune_hud;
 mod rune_ui;
 #[cfg(target_os = "macos")]

@@ -13,6 +13,8 @@ pub(super) struct HttpRequest {
     pub(super) authorization: Option<String>,
     pub(super) dictation_token: Option<String>,
     pub(super) stream_token: Option<String>,
+    /// `X-Hex-Application`: the app a remote device dictated into.
+    pub(super) remote_application: Option<String>,
     pub(super) content_type: Option<String>,
     pub(super) content_length: Option<usize>,
     pub(super) body_prefix: Vec<u8>,
@@ -155,6 +157,7 @@ pub(super) fn reason(status: u16) -> &'static str {
         204 => "No Content",
         400 => "Bad Request",
         401 => "Unauthorized",
+        403 => "Forbidden",
         404 => "Not Found",
         408 => "Request Timeout",
         409 => "Conflict",
@@ -254,6 +257,7 @@ pub(super) fn read_request_until(
     let mut authorization = None;
     let mut dictation_token = None;
     let mut stream_token = None;
+    let mut remote_application = None;
     let mut content_type = None;
     let mut content_length = None;
     for (index, line) in lines.enumerate() {
@@ -273,6 +277,8 @@ pub(super) fn read_request_until(
                 return Err(RequestReadError::Invalid);
             }
             stream_token = Some(value.trim().to_owned());
+        } else if name.eq_ignore_ascii_case("x-hex-application") {
+            remote_application = Some(value.trim().to_owned());
         } else if name.eq_ignore_ascii_case("content-type") {
             content_type = Some(value.trim().to_owned());
         } else if name.eq_ignore_ascii_case("content-length") {
@@ -299,6 +305,7 @@ pub(super) fn read_request_until(
         authorization,
         dictation_token,
         stream_token,
+        remote_application,
         content_type,
         content_length,
         body_prefix,

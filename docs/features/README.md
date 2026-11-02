@@ -33,12 +33,15 @@ Its Restore shortcut default toggle (off by default) puts a Restore default
 button beside Paste last dictation's shortcut (#613); its Sort and filter
 models toggle (off by default) adds a sort and a saved-language filter to the
 Local transcription picker (#645); its Benchmark details toggle (off by
-default) shows each card's raw WER or CER with its language, dataset, source,
+default) shows each model's raw WER or CER with its language, dataset, source,
 and conditions (#647).
 General › Advanced › Interface language offers Português (Brasil), and Hex
 uses it for any Portuguese system language (#867); it also offers Français,
 used for any French system language (#892). Neither has had a native
-speaker's review yet.
+speaker's review yet. It offers 简体中文 (`zh`) and 繁體中文 (`zh-Hant`, #944);
+Traditional Chinese is drafted from the Simplified strings by a character and
+Taiwan-usage phrase converter (`desktop/i18n/traditional_chinese.rs`), not yet
+reviewed by a native speaker.
 The [vocabulary](vocabulary.md) biases transcription toward names you list.
 [Your own speech models](own-models.md) covers adding a GGUF file and using
 models another app already downloaded.
@@ -125,13 +128,32 @@ with 2.1.17; the initial 2.1.16 mirror preserves that release's original bytes.
 Launch Hex, setup incomplete              // setup.tour; every build and OS, full window
 ├── One onboarding: the first-run story (rune_ui/onboarding_kit/live.rs) over
 │   the tour state machine (desktop::onboarding::Flow); no flag, no other tour
+├── Skip (quiet, top-right, every page but Hex is ready)    // setup.skip
+│   ├── Ends onboarding at once and marks it done; Run setup again replays it
+│   └── A model not ready yet keeps downloading: the one picked, else the
+│       recommended one, also when the model step or the scan held it, so a
+│       blocked network (#894) never traps the person in onboarding
+├── GNOME/KDE Wayland (pastes through the RemoteDesktop portal, no wtype)
+│   and no saved grant -> before Your turn, "Let Hex paste for you"     // setup.paste-access
+│   ├── Says why: Hex only sends the paste keystroke, never sees the screen;
+│   │   the desktop asks once and may call it remote desktop (#932)
+│   ├── Allow -> opens the desktop's dialog; the grant's restore token is saved,
+│   │   so the first paste needs no dialog
+│   ├── Refused -> Try again, or Continue (the desktop asks at the first paste)
+│   ├── X11, wlroots with wtype, macOS, Windows -> no page
+│   └── Skipped or refused -> Settings › General shows it under "Permissions
+│       needed" until allowed. Check: golden `onboarding-paste`; the real
+│       portal dialog is not exercised
 ├── Upgrading from 2.3.1 or earlier (same `hex` folder)     // setup.upgrade; macOS
 │   ├── `anomaly.hex` is a new identity: macOS kept none of the old grants
 │   ├── Settings without `anomaly-hex-identity` in `migrations` -> checked once at launch
 │   │   ├── Permissions or the selected model not ready -> the old completion
 │   │   │   no longer counts -> onboarding opens from the start
 │   │   └── Everything ready -> no onboarding; nothing but the ID changes
-│   └── Saved settings are kept; the ID is recorded either way
+│   ├── Saved settings are kept; the ID is recorded either way
+│   └── Setup ready, listener starting -> a running 2.3.1 or Swift Hex   // setup.quit-legacy
+│       (retired bundle IDs) is asked to quit, so both never answer Option;
+│       it stays installed. No check; `macos_rune::quit_legacy_hex`
 ├── Setting up Hex -> speech model download starts at once  // setup.background-download
 │   ├── Model -> the selection recommended for the system's first preferred
 │   │            language (English -> Parakeet Unified English; e.g. French ->
@@ -224,11 +246,13 @@ Apple Speech is currently excluded from the desktop picker.
 
 ```ts
 General > Dictation > Speech model, then Language below it   // setup.language-select; every desktop root
-├── Speech model -> Picker lists every available model; never changes the language
-│   ├── Saved language's recommendations first with their tags, then the
-│   │   models that support it, then those that do not
-│   ├── Model without the saved language -> Card: "Doesn't support Japanese;
-│   │   switches the language to English"
+├── Speech model -> Picker: Compare, then every model; never changes the language
+│   ├── Compare -> "Speech model for Japanese": three columns from the saved
+│   │   language's models, recommendations first; "{n} more models" -> every model
+│   ├── Every model -> the saved language's models, Your model files, then a fold
+│   │   "{n} more that don't speak Japanese"
+│   ├── Model without the saved language -> Row: "Choosing it switches the
+│   │   language to English"
 │   └── Choose it -> ChooseModel(model, model's default: English, else its first)
 │       └── Saved -> Language row: "<Model> doesn't support Japanese, so the
 │           language changed to English" until the next choice
@@ -249,7 +273,7 @@ Checks: `the_picker_lists_every_model_with_the_language_s_recommendations_first`
 `browsing_the_picker_never_changes_the_language`,
 `changing_only_the_language_prepares_the_same_model_again`, and
 `settings_opens_the_picker_and_names_the_model_and_language_apart`. Scenes:
-`picker-japanese`, `language-fallback`, `language-menu`. Fixture renders and
+`picker-japanese`, `picker-japanese-all`, `language-fallback`, `language-menu`. Fixture renders and
 recorded requests only; a live model switch with a fallback has not been
 observed. Apple Speech stays excluded, so its per-locale install through the
 Language row is unexercised.
@@ -262,6 +286,8 @@ Choose a supported language              // setup.language-conditioning; macOS +
 │   context prompt (vocabulary.md); output that only repeats it is dropped
 ├── Hebrew -> ivrit.ai Whisper large-v3-turbo, always with the `he` hint (it
 │   lost Whisper's language detection); stock Whisper turbo also offers it
+├── Russian -> GigaAM v3 (Russian only, no language input); Parakeet v3 and
+│   Whisper turbo also offer it
 └── Bangla -> Whisper only, with the `bn` hint; Auto lets Whisper guess per clip
 ```
 
@@ -284,25 +310,31 @@ Checks: `prompt_echo_is_dropped`, `speech_containing_the_hints_is_kept`,
 [transcription/gguf_session.rs](../../src/transcription/gguf_session.rs).
 
 ```ts
-Settings picker or setup > model card     // setup.model-card; shared by every desktop root
-├── Title row -> Name, recommendation tag, "Streams" tag    // at most two tags
-│   ├── Recommendation -> For the saved language from the catalog (English: Unified English first)
-│   └── Streams -> Catalog `streams` (pinned artifact advertises streaming)
-├── Detail line -> "Transcribes while you speak" (non-macOS: "… on a GPU"),
-│                  coverage, benchmark, timestamps, Installed
+Settings picker > Compare                 // setup.model-card; shared by every desktop root
+├── Column head -> Role (Recommended, Fewest wrong words, Fastest, Most languages,
+│   Reads your vocabulary; from the catalog for the saved language), name, one-line blurb
+├── Rows -> Wait when you stop (30 s ÷ realtime; "None" when it streams), Wrong
+│   words or characters "1 in N" (benchmark in the saved language, else "Not
+│   measured"; row hidden when none is measured), Languages, Reads your vocabulary,
+│   Download size; one strictly best value is medium weight, ties get none
+├── Action cell -> exactly one: In use dot, progress with Cancel, Use, or
+│   Download <size>; Primary only on the recommended column when it can be chosen
+├── The model in use or preparing replaces the last column when it would be left out
+└── "{n} more models" -> Every model
+
+Settings picker > Every model row          // fixed height; scrolls
+├── Name, role, blurb, then "No wait · 1 in 50 words wrong · 25 languages · 2.5 GB"
 ├── Saved language unsupported -> Warning line naming the language it switches to
-├── Trailing edge -> Active as dot + label; Cancel while preparing; else Use/Download
-├── Preparing -> Progress bar with its "Downloading 37%" / "Loading model" label
-├── Speed · Size · Accuracy -> 100% minus the benchmark word error rate
-├── Labs > Benchmark details (off) -> Speed · Size · Error rate "7.57% CER · lower is better",
-│   a wrapping line: language · dataset/split · source · conditions or "unknown" ·
+├── Trailing edge -> In use dot; progress with Cancel; else Use/Download; Delete when downloaded
+├── Labs > Benchmark details (off) -> raw error rate "7.57% CER", a wrapping line:
+│   language · dataset/split · source · conditions or "unknown" ·
 │   speed qualified; "Most accurate" only between comparable records (labs.md)
-├── Labs > Parakeet Ultra (off) -> its card with a Labs tag and Details: languages,  // setup.parakeet-ultra
+├── Labs > Parakeet Ultra (off) -> its row with a Labs tag and Details: languages,  // setup.parakeet-ultra
 │   measured memory, the CC BY 4.0 credit, notice, Source/License links, folded
 │   published benchmarks "not measured in Hex" (labs.md)
 ├── "Add model file…" in the header -> imported cards after the catalog:  // setup.custom-models
 │   Imported · family · languages · Not benchmarked · file · licence · SHA-256
-│   prefix; Speed and Accuracy "Unknown"; Rename, Remove (not the active
+│   prefix; Rename, Remove (not the active
 │   model); missing or changed -> warning line and no Use (own-models.md)
 └── Found on this computer -> a scan of the Hugging Face cache when the picker  // setup.found-models
     opens: other compatible files at the top (Not tested by Hex, Use); a catalog
@@ -316,8 +348,8 @@ are the models marked `streams`
 the artifact; dictation still streams only after the load probe succeeds on a GPU
 device ([Streaming Finish](dictation.md#streaming-finish)). The menu bar lists
 names only and shows no tags. Scenes: `hex app -- --snap OUT --scene picker`
-(also `picker-downloading`, `picker-japanese`, `picker-custom-models`,
-`picker-found`).
+(also `picker-downloading`, `picker-japanese`, `picker-japanese-all`,
+`picker-custom-models`, `picker-found`).
 
 Nemotron 3.5 ASR (#834; NVIDIA's `nemotron-3.5-asr-streaming-0.6b`, OpenMDW-1.1)
 streams in 27 of Hex's languages and detects the language with Auto: Hex sends
@@ -532,9 +564,9 @@ desktop.
 ### Delete downloaded models
 
 ```ts
-Settings picker > Downloaded model card   // setup.delete-model; macOS
+Settings picker > Every model > Downloaded row   // setup.delete-model; macOS
 ├── Delete -> "Delete <size>?" -> Delete again
-│   ├── Success -> Model file, receipt, and partial download removed; card offers Download
+│   ├── Success -> Model file, receipt, and partial download removed; row offers Download
 │   └── Download in progress -> Nothing removed; "Model could not be deleted." with reason
 ├── Selected dictation model (any language) -> No Delete
 ├── Preparing or Apple Speech model -> No Delete
@@ -561,12 +593,12 @@ worker readiness; a later worker-load failure does not roll back saved selection
 ```ts
 Saved shortcut                           // dictation; Option by default; Windows and X11 accept mouse buttons, macOS with Labs > Mouse shortcuts
 ├── Hold -> Speak -> Release
-├── Tap, tap -> Speak hands-free -> Press again   // Double-tap to lock enabled
+├── Tap, tap -> Speak hands-free -> Press again   // Shortcut mode: Hold or double-tap
 └── Escape -> Nothing: no cancel, every dictation finishes and pastes (#786)
 
-General > Advanced > Double-tap only     // optional for key bindings
-  -> Disable single-hold activation
-  -> Keep the double-tap hands-free path
+General > Shortcut mode -> Hold or double-tap (default), Hold, Tap, Double-tap
+  -> Modal: each choice with its keys and a looping key/recording timeline
+  -> Double-tap needs a key binding; with a lone modifier it says so
 
 Labs > Second dictation shortcut (macOS, off)   // labs.md; issue 627
   -> General shows "Second dictation shortcut" under Shortcut (unbound, clearable)
@@ -642,7 +674,7 @@ General                                  // settings
 ├── Basics card -> Shortcut, Speech model, Language, Microphone, Launch at login
 │   ├── Each row leads with an icon; choices are inline dropdowns, not segments
 │   ├── Language -> fixed text for a one-language model, else a dropdown
-│   └── A row that hides or shows (Advanced, a microphone error, Double-tap only)
+│   └── A row that hides or shows (Advanced, a microphone error)
 │       -> Folds under a clip as the rows below slide over it; no fade in place
 ├── Microphone -> Value names the input in use, with live level bars // settings.microphone
 │   ├── "System default · Kit Pods", or a saved device
@@ -678,16 +710,16 @@ General                                  // settings
 │   └── Open menu covers the controls beneath it; click elsewhere dismisses
 ├── Advanced ▸ -> one fold per pane, closed by default, even while a setting in it is in use
 │   ├── Collapse -> drops a pending release confirmation
-│   ├── Dictation -> Shortcut side, Shortcut mode (How it works), Double-tap to lock,
-│   │   Double-tap only, keyboard-language mappings (while its Labs toggle is on),
+│   ├── Dictation -> Shortcut side, keyboard-language mappings (while its Labs toggle is on),
 │   │   Use the Mac's microphone instead of Bluetooth (Linux, Windows: "Use another
 │   │   microphone instead of Bluetooth")
 │   ├── Output -> Paste last shortcut, While dictating, Dictation HUD, Terminal paste (Linux)
 │   │   (Dictate without processing sits in the Output pane; see dictation.md)
 │   └── Application -> Enable on launch, Show Dock icon, Sound volume, Sounds,
 │       Interface language, Update channel (self-updating installs)
-│       // Interface language System: macOS's first preferred language (zh-Hans -> 中文),
-│       // Linux LC_ALL/LC_MESSAGES/LANG, Windows the user locale; unknown -> English
+│       // Interface language System: macOS's first preferred language (zh-Hans -> 简体中文,
+│       // zh-Hant, zh-TW, zh-HK, zh-MO -> 繁體中文), Linux LC_ALL/LC_MESSAGES/LANG
+│       // (zh_TW.UTF-8 -> 繁體中文), Windows the user locale; unknown -> English
 ├── Use the Mac's / another microphone instead of Bluetooth (Advanced, on)
 │   └── Off -> System default follows a Bluetooth default too; re-resolves once idle
 ├── Labs > Share dictation shortcut with other apps (Windows, off)
@@ -908,6 +940,7 @@ Foreground context -> Select processing
 └── Otherwise Global
 
 Selected mode                            // replaces Global's rewrite and transformations
+  -> Its vocabulary, then the shared one   // features/vocabulary.md (vocabulary.modes)
   -> Global's corrections, then the mode's  // every OS
   -> OpenCode transformation             // optional provider-backed rewrite
   -> Transformations                     // ordered text chain
@@ -915,6 +948,17 @@ Selected mode                            // replaces Global's rewrite and transf
 
 Stage fails -> Preserve its input        // failed chain discards partial results
 ```
+
+**Fixed November 1, 2026 (issue 949):** every OpenCode rewrite's fixed
+instructions (`PROTOCOL_PROMPT`) now say to keep every number as said (no
+dropped, merged, or reformatted numbers, no added thousands separators) and,
+unless the mode's prompt says otherwise, to write a spoken enumeration
+("point one … point two …") as a numbered list, one item per line. A
+transcript of numbers alone (digits or English number words) skips the
+rewrite and pastes after corrections as heard; transformations still run.
+Check: `numbers_only_transcripts_skip_the_rewrite` in
+[dictation/processor.rs](../../src/dictation/processor.rs). The prompt rules
+were not run against a live model.
 
 Built-in text transformations run natively. Custom transformations come from
 `~/.config/hex/hex.config.ts` and run in Hex's embedded script engine, each
@@ -1349,7 +1393,12 @@ Linux beta                               // not macOS feature parity
 │   │       under that shortcut's own row (Dictation, Output);
 │   │       the rest keep working
 │   ├── Wayland without the portal -> Bind `hex` commands in the desktop
-│   │   └── General hides shortcut rows and lists the commands
+│   │   ├── General hides shortcut rows and lists the commands
+│   │   └── GNOME: Add GNOME keyboard shortcuts -> custom shortcuts running
+│   │       `hex dictation toggle` (#781); written only while the listener has no
+│   │       portal, and removed once the portal (or X11) binds the shortcuts, so a
+│   │       press never both starts a portal hold and toggles it off (#931)
+│   │       // check: entries_exist_only_without_the_portal (the rule only)
 │   └── Listener starting or stopped -> `hex status` reports Unregistered,
 │       never the X11 mode
 ├── hex dictation start|stop|toggle, hex paste-last
@@ -1370,6 +1419,18 @@ Linux beta                               // not macOS feature parity
 │           // check: only_requested_shortcuts_are_shown (a stale grant stays
 │           // out), kde_actions_hex_no_longer_binds_are_removed (the list only);
 │           // the KDE removal is not run on a Plasma session
+│       └── KDE's approval dialog -> Hex waits for it up to 30 min, not 60 s:
+│           giving up closed the session, and KDE then kept every shortcut
+│           with no key and never asked again (#898). A bind left unapproved
+│           (dismissed, canceled, abandoned) is noted in
+│           `kde-unapproved-shortcuts`; the next bind removes those ids while
+│           they still have no key, so the dialog asks again; a key set in
+│           System Settings since stays
+│           // checked in a headless KWin 6.8 session (xdg-desktop-portal-kde
+│           // 6.8.2): the dialog stays up with Hex "Enabling…"; with the note,
+│           // keyless ids are removed and the dialog returns; without it they
+│           // stay; Hex is listed under Applications in System Settings ›
+│           // Shortcuts. Approving with OK was not exercised (no input there)
 ├── Recording HUD -> Dot scope, as on macOS, on the
 │   │   top or bottom edge, recording with the voice's level, then transcribing
 │   │   until accepted output finishes; Hidden position -> none   // linux.hud
@@ -1421,6 +1482,7 @@ Linux beta                               // not macOS feature parity
 │       │   └── V sent on evdev KEY_V (placeholder releases first), so Hyprland's
 │       │       binds read Ctrl(+Shift)+V, not Ctrl(+Shift)+Escape (#444)
 │       ├── Otherwise -> RemoteDesktop portal: keyboard-only session, approved once
+│       │   (onboarding or Settings can ask first, `setup.paste-access`)
 │       │   (restore token, persist_mode 2) -> Ctrl+V as keysyms
 │       │   ├── 15 s after the last paste -> session closes when its grant restores, so
 │       │   │   GNOME's remote-control indicator shows only around pastes (#718); a grant
@@ -1449,7 +1511,9 @@ Linux beta                               // not macOS feature parity
         // KDE bindings and RemoteDesktop grants stored under `hex` are asked again once
         // checked by unit tests only, not on a GNOME 49 session
 GNOME portal shortcuts (#723)            // linux.gnome-shortcuts
-├── New GNOME setup -> dictation default Ctrl+Alt+Space (GNOME keeps Alt+Space)
+├── New GNOME or KDE Plasma setup -> dictation default Ctrl+Alt+Space (GNOME's
+│   window menu and Plasma's KRunner keep Alt+Space; #898)
+│   // checked in a headless KWin 6.8 session: the portal's dialog flags Alt+Space
 ├── Granted key GNOME keeps (Alt+Space, Super+Space, Alt+Tab, Print, …) -> red note under the row
 ├── Keys changed in GNOME Settings -> ShortcutsChanged -> pressing them dictates at once;
 │   the row note, the Status hint and `hex status --json` listener.shortcuts show them
@@ -1898,7 +1962,7 @@ best-effort deletion is not guaranteed deletion.
 
 `dev.rune-ui` lives in [rune_ui.rs](../../src/rune_ui.rs) and its pane modules;
 its tests drive the Rune runtime headlessly (navigation; General rows per
-shortcut source, fitting the default window with Advanced collapsed, Double-tap to lock folding under the rows below, saves through the host, Quit Hex, microphone-release
+shortcut source, fitting the default window with Advanced collapsed, Shortcut mode's modal, saves through the host, Quit Hex, microphone-release
 confirmation, shortcut recording and Escape, conflicts; History select, delete, two-step
 clear, copy; Modes add/delete, corrections, transformations (drag reorder saves once
 on release), application conflicts, a chosen file joining the mode, arrow

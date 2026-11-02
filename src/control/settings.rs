@@ -378,6 +378,16 @@ const KEYS: &[Key] = &[
         "Labs: a Copy Recent Dictation submenu in the menu bar that copies one of the last five dictations (macOS)",
     ),
     key(
+        "labs.skip_pauses",
+        Kind::Bool,
+        "Labs: a dictation transcribed as a whole clip hears only the start and end of each long pause, so slow computers paste sooner (Linux and Windows)",
+    ),
+    key(
+        "labs.stop_when_call_ends",
+        Kind::Bool,
+        "Labs: a meeting recording Hex started on its own stops 30 s after its call app leaves the microphone and goes quiet, unless you keep recording (macOS)",
+    ),
+    key(
         "meetings.enabled",
         Kind::Bool,
         "Labs: Meetings (beta), call detection, recording, and transcripts",
@@ -490,7 +500,9 @@ const KEYS: &[Key] = &[
     ),
     optional(
         "ui_language",
-        Kind::Choice(&["en", "pl", "zh", "ja", "de", "es", "uk", "pt", "fr"]),
+        Kind::Choice(&[
+            "en", "pl", "zh", "zh-Hant", "ja", "de", "es", "uk", "pt", "fr",
+        ]),
         "Interface language; none follows the system",
     ),
     key(
@@ -573,6 +585,7 @@ const NEEDS: &[(&str, &str)] = &[
     ("meetings.", "meetings"),
     ("labs.live_chapters", "meetings"),
     ("labs.subtitle_export", "meetings"),
+    ("labs.stop_when_call_ends", "meetings"),
     ("experimental.hex_microphone", "fun"),
     ("show_dock_icon", "dock_icon"),
     ("keyboard_model_switching.", "keyboard_model_switching"),
@@ -1024,7 +1037,7 @@ fn parse(key: &Key, raw: &str, shortcuts: &ShortcutRules) -> Result<Value, Contr
             let normalized = trimmed.to_ascii_lowercase().replace('-', "_");
             let choice = choices
                 .iter()
-                .find(|choice| **choice == normalized)
+                .find(|choice| choice.to_ascii_lowercase().replace('-', "_") == normalized)
                 .ok_or_else(|| invalid(name, &format!("expected one of {}", choices.join(", "))))?;
             Ok(if name == "meetings.calendar.lead_minutes" {
                 let minutes: u8 = choice.parse().expect("lead choices are numbers");
@@ -1308,6 +1321,18 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), keys().count(), "a key is listed twice");
+    }
+
+    #[test]
+    fn ui_language_accepts_traditional_chinese_in_any_case() {
+        for raw in ["zh-Hant", "zh-hant", "ZH_HANT"] {
+            let change = apply(&AppSettings::default(), "ui_language", raw, &rules()).unwrap();
+            let shown = get(&change.settings, "ui_language").unwrap();
+            assert_eq!(shown[0].value, Value::String("zh-Hant".into()), "{raw}");
+        }
+        let change = apply(&AppSettings::default(), "ui_language", "zh", &rules()).unwrap();
+        let shown = get(&change.settings, "ui_language").unwrap();
+        assert_eq!(shown[0].value, Value::String("zh".into()));
     }
 
     #[test]

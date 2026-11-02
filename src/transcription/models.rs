@@ -13,11 +13,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::artifacts::{
-    COHERE_ARTIFACT, COHERE_LANGUAGES, IVRIT_WHISPER_ARTIFACT, NEMOTRON_3_5_ASR_ARTIFACT,
-    NEMOTRON_3_5_LANGUAGES, NEMOTRON_3_5_LOCALES, PARAKEET_ULTRA_ARTIFACT,
-    PARAKEET_UNIFIED_ENGLISH_ARTIFACT, PARAKEET_V2_ARTIFACT, PARAKEET_V3_ARTIFACT,
-    PARAKEET_V3_LANGUAGES, QWEN_ARTIFACT, QWEN_LANGUAGES, QWENCLEO_ARTIFACT, SENSEVOICE_ARTIFACT,
-    UNDERDOG_BARK_3_CLEAN_ARTIFACT, UNDERDOG_BARK_3_PRO_ARTIFACT, WHISPER_ARTIFACT,
+    COHERE_ARTIFACT, COHERE_LANGUAGES, GIGAAM_V3_E2E_RNNT_ARTIFACT, IVRIT_WHISPER_ARTIFACT,
+    NEMOTRON_3_5_ASR_ARTIFACT, NEMOTRON_3_5_LANGUAGES, NEMOTRON_3_5_LOCALES,
+    PARAKEET_ULTRA_ARTIFACT, PARAKEET_UNIFIED_ENGLISH_ARTIFACT, PARAKEET_V2_ARTIFACT,
+    PARAKEET_V3_ARTIFACT, PARAKEET_V3_LANGUAGES, QWEN_ARTIFACT, QWEN_LANGUAGES, QWENCLEO_ARTIFACT,
+    SENSEVOICE_ARTIFACT, UNDERDOG_BARK_3_CLEAN_ARTIFACT, UNDERDOG_BARK_3_PRO_ARTIFACT,
+    WHISPER_ARTIFACT,
 };
 pub use super::custom_models::CustomModelId;
 pub use super::languages::{LANGUAGES, language_name};
@@ -44,6 +45,7 @@ pub enum TranscriptionModelId {
     UnderdogBark3Clean,
     ParakeetUltra,
     Nemotron35Asr,
+    GigaAmV3,
     AppleSpeech,
     Custom(CustomModelId),
 }
@@ -77,6 +79,7 @@ impl TranscriptionModelId {
             Self::UnderdogBark3Clean => "underdog_bark_3_clean",
             Self::ParakeetUltra => "parakeet_ultra",
             Self::Nemotron35Asr => "nemotron_3_5_asr",
+            Self::GigaAmV3 => "gigaam_v3",
             Self::AppleSpeech => "apple_speech",
             Self::Custom(id) => id.as_str(),
         }
@@ -112,6 +115,7 @@ impl FromStr for TranscriptionModelId {
             "underdog_bark_3_clean" => Ok(Self::UnderdogBark3Clean),
             "parakeet_ultra" => Ok(Self::ParakeetUltra),
             "nemotron_3_5_asr" => Ok(Self::Nemotron35Asr),
+            "gigaam_v3" => Ok(Self::GigaAmV3),
             "apple_speech" => Ok(Self::AppleSpeech),
             _ => CustomModelId::parse(value)
                 .map(Self::Custom)
@@ -174,17 +178,6 @@ pub enum Recommendation {
     Vocabulary,
 }
 
-impl Recommendation {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Recommended => "Recommended",
-            Self::Fastest => "Fastest",
-            Self::MostAccurate => "Most accurate",
-            Self::Vocabulary => "Uses vocabulary",
-        }
-    }
-}
-
 #[derive(Clone, Copy)]
 pub struct ModelChoice {
     pub model: &'static ModelDefinition,
@@ -195,12 +188,9 @@ pub struct ModelDefinition {
     pub id: TranscriptionModelId,
     pub name: &'static str,
     pub realtime: &'static str,
-    /// Word error rate on the `quality_context` benchmark, in percent;
+    /// Word error rate on the model's own benchmark, in percent;
     /// `None` when the system manages the model and publishes none.
     pub word_error_rate: Option<f64>,
-    pub quality_context: &'static str,
-    pub coverage: &'static str,
-    pub timestamps: &'static str,
     /// The pinned artifact advertises streaming, so dictation can transcribe
     /// while the shortcut is held. It still streams only on a GPU device and
     /// after its load probe succeeds; otherwise it transcribes the whole clip.
@@ -325,11 +315,6 @@ impl ModelDefinition {
             .collect()
     }
 
-    /// Benchmark accuracy, the inverse of its word error rate: `98.4%`.
-    pub fn accuracy_label(&self) -> Option<String> {
-        self.word_error_rate.map(accuracy_label)
-    }
-
     pub fn size_label(&self) -> String {
         match self.runtime {
             ModelRuntime::AppleSpeech => "Managed".into(),
@@ -369,10 +354,6 @@ impl ModelDefinition {
     }
 }
 
-fn accuracy_label(word_error_rate: f64) -> String {
-    format!("{:.1}%", (100.0 - word_error_rate).clamp(0.0, 100.0))
-}
-
 /// Silero VAD v6.2. Dictation and meetings skip audio it finds no speech in,
 /// because models hallucinate closing phrases such as "thank you" on silence
 /// and room noise. It downloads with every transcription model.
@@ -394,9 +375,6 @@ pub const MODELS: &[ModelDefinition] = &[
         name: "Parakeet Unified English",
         realtime: "~163x",
         word_error_rate: Some(1.60),
-        quality_context: "English benchmark",
-        coverage: "English",
-        timestamps: "Token timestamps",
         streams: true,
         runtime: ModelRuntime::Gguf(&PARAKEET_UNIFIED_ENGLISH_ARTIFACT),
         languages: &["en"],
@@ -408,9 +386,6 @@ pub const MODELS: &[ModelDefinition] = &[
         name: "Parakeet v2",
         realtime: "~55x",
         word_error_rate: Some(1.69),
-        quality_context: "English benchmark",
-        coverage: "English",
-        timestamps: "Token timestamps",
         streams: false,
         runtime: ModelRuntime::Gguf(&PARAKEET_V2_ARTIFACT),
         languages: &["en"],
@@ -422,9 +397,6 @@ pub const MODELS: &[ModelDefinition] = &[
         name: "Parakeet v3",
         realtime: "~33x",
         word_error_rate: Some(1.94),
-        quality_context: "English benchmark",
-        coverage: "25 languages",
-        timestamps: "Token timestamps",
         streams: false,
         runtime: ModelRuntime::Gguf(&PARAKEET_V3_ARTIFACT),
         languages: PARAKEET_V3_LANGUAGES,
@@ -437,9 +409,6 @@ pub const MODELS: &[ModelDefinition] = &[
         name: "Whisper large-v3-turbo",
         realtime: "~19x",
         word_error_rate: Some(2.01),
-        quality_context: "English benchmark",
-        coverage: "100 languages",
-        timestamps: "Segment timestamps",
         streams: false,
         runtime: ModelRuntime::Gguf(&WHISPER_ARTIFACT),
         languages: &["*"],
@@ -451,9 +420,6 @@ pub const MODELS: &[ModelDefinition] = &[
         name: "Qwen3-ASR 0.6B",
         realtime: "~16x",
         word_error_rate: Some(7.64),
-        quality_context: "Mandarin benchmark",
-        coverage: "30 languages",
-        timestamps: "No timestamps",
         streams: false,
         runtime: ModelRuntime::Gguf(&QWEN_ARTIFACT),
         languages: QWEN_LANGUAGES,
@@ -467,9 +433,6 @@ pub const MODELS: &[ModelDefinition] = &[
         realtime: "~9x",
         // The author's own 3,699-utterance evaluation, not a public test set.
         word_error_rate: Some(19.85),
-        quality_context: "Author's Egyptian Arabic test",
-        coverage: "Egyptian Arabic, with English terms",
-        timestamps: "No timestamps",
         streams: false,
         runtime: ModelRuntime::Gguf(&QWENCLEO_ARTIFACT),
         languages: &["ar"],
@@ -483,9 +446,6 @@ pub const MODELS: &[ModelDefinition] = &[
         // it ran a 9.8 s Hebrew clip as fast as the stock model (38x and 36x).
         realtime: "~19x",
         word_error_rate: Some(18.45),
-        quality_context: "Hebrew benchmark",
-        coverage: "Hebrew",
-        timestamps: "Segment timestamps",
         streams: false,
         runtime: ModelRuntime::Gguf(&IVRIT_WHISPER_ARTIFACT),
         // ivrit.ai: the fine-tune lost language detection and translation, so
@@ -499,9 +459,6 @@ pub const MODELS: &[ModelDefinition] = &[
         name: "SenseVoice Small",
         realtime: "~72x",
         word_error_rate: Some(10.11),
-        quality_context: "Mandarin benchmark",
-        coverage: "5 languages",
-        timestamps: "No timestamps",
         streams: false,
         runtime: ModelRuntime::Gguf(&SENSEVOICE_ARTIFACT),
         languages: &["zh", "yue", "en", "ja", "ko"],
@@ -513,9 +470,6 @@ pub const MODELS: &[ModelDefinition] = &[
         name: "Cohere Transcribe",
         realtime: "73x",
         word_error_rate: Some(1.27),
-        quality_context: "English benchmark",
-        coverage: "14 languages",
-        timestamps: "No timestamps",
         streams: false,
         runtime: ModelRuntime::Gguf(&COHERE_ARTIFACT),
         languages: COHERE_LANGUAGES,
@@ -527,9 +481,6 @@ pub const MODELS: &[ModelDefinition] = &[
         name: "Underdog Bark 3.0 Pro",
         realtime: "~33x",
         word_error_rate: Some(1.38),
-        quality_context: "English benchmark",
-        coverage: "English",
-        timestamps: "Token timestamps",
         streams: false,
         runtime: ModelRuntime::Gguf(&UNDERDOG_BARK_3_PRO_ARTIFACT),
         languages: &["en"],
@@ -542,9 +493,6 @@ pub const MODELS: &[ModelDefinition] = &[
         name: "Underdog Bark 3.0 Clean",
         realtime: "~33x",
         word_error_rate: Some(1.71),
-        quality_context: "English benchmark",
-        coverage: "English, without filler words",
-        timestamps: "Token timestamps",
         streams: false,
         runtime: ModelRuntime::Gguf(&UNDERDOG_BARK_3_CLEAN_ARTIFACT),
         languages: &["en"],
@@ -560,9 +508,6 @@ pub const MODELS: &[ModelDefinition] = &[
         // LibriSpeech test-clean, transcribe.cpp's published conversion
         // benchmark (`model_benchmarks`); not measured in Hex.
         word_error_rate: Some(1.80),
-        quality_context: "English benchmark",
-        coverage: "25 languages",
-        timestamps: "Token timestamps",
         streams: false,
         runtime: ModelRuntime::Gguf(&PARAKEET_ULTRA_ARTIFACT),
         languages: PARAKEET_V3_LANGUAGES,
@@ -582,9 +527,6 @@ pub const MODELS: &[ModelDefinition] = &[
         // English and 5.17% German against 7.91% and 10.39% (8.77% and
         // 10.46% with Auto). It is here to stream with the language set.
         word_error_rate: Some(3.05),
-        quality_context: "English benchmark",
-        coverage: "27 languages",
-        timestamps: "Token timestamps",
         streams: true,
         runtime: ModelRuntime::Gguf(&NEMOTRON_3_5_ASR_ARTIFACT),
         languages: NEMOTRON_3_5_LANGUAGES,
@@ -594,13 +536,26 @@ pub const MODELS: &[ModelDefinition] = &[
         supports_language_detection: true,
     },
     ModelDefinition {
+        id: TranscriptionModelId::GigaAmV3,
+        name: "GigaAM v3",
+        // On apollo's Vulkan GPU it ran 1.2 to 1.4 times as fast as Parakeet
+        // v3 (the FLEURS Russian test split, and a 10 s clip of it).
+        realtime: "~40x",
+        // FLEURS Russian test, Hex's run (`model_benchmarks`): Parakeet v3
+        // scored 6.52% on the same run and Whisper large-v3-turbo 5.36%.
+        word_error_rate: Some(5.37),
+        streams: false,
+        runtime: ModelRuntime::Gguf(&GIGAAM_V3_E2E_RNNT_ARTIFACT),
+        languages: &["ru"],
+        // Russian only: it has no language input.
+        accepts_language_hint: false,
+        supports_language_detection: false,
+    },
+    ModelDefinition {
         id: TranscriptionModelId::AppleSpeech,
         name: "Apple Speech",
         realtime: "On device",
         word_error_rate: None,
-        quality_context: "Apple managed",
-        coverage: "System locales",
-        timestamps: "Segment timestamps",
         streams: false,
         runtime: ModelRuntime::AppleSpeech,
         languages: &["*"],
@@ -636,7 +591,7 @@ pub fn all_models() -> Vec<&'static ModelDefinition> {
 pub(crate) fn choices_for_runtime(language: &str) -> Vec<ModelChoice> {
     use Recommendation::{Fastest, MostAccurate, Recommended, Vocabulary};
     use TranscriptionModelId::{
-        CohereTranscribe, IvritWhisperLargeV3Turbo, ParakeetUnifiedEnglish, ParakeetV3,
+        CohereTranscribe, GigaAmV3, IvritWhisperLargeV3Turbo, ParakeetUnifiedEnglish, ParakeetV3,
         Qwen3Asr06B, SenseVoiceSmall, WhisperLargeV3Turbo,
     };
     let choices: &[(TranscriptionModelId, Recommendation)] = match language {
@@ -675,6 +630,9 @@ pub(crate) fn choices_for_runtime(language: &str) -> Vec<ModelChoice> {
             (IvritWhisperLargeV3Turbo, Recommended),
             (WhisperLargeV3Turbo, Vocabulary),
         ],
+        // FLEURS Russian test: 5.37% WER against Parakeet v3's 6.52%, and
+        // Whisper turbo's 5.36% at a fifth of its speed (Hex's run).
+        "ru" => &[(GigaAmV3, Recommended), (WhisperLargeV3Turbo, Vocabulary)],
         "vi" => &[
             (Qwen3Asr06B, Recommended),
             (CohereTranscribe, MostAccurate),
@@ -1457,6 +1415,24 @@ mod tests {
     }
 
     #[test]
+    fn russian_recommends_gigaam_without_a_hint() {
+        use Recommendation::{Recommended, Vocabulary};
+        use TranscriptionModelId::{GigaAmV3, WhisperLargeV3Turbo};
+        let russian: Vec<_> = choices_for_runtime("ru")
+            .into_iter()
+            .map(|choice| (choice.model.id, choice.recommendation))
+            .collect();
+        assert_eq!(
+            russian,
+            [(GigaAmV3, Recommended), (WhisperLargeV3Turbo, Vocabulary)]
+        );
+        let gigaam = definition(GigaAmV3);
+        assert_eq!(gigaam.language_choices(), ["ru"]);
+        assert_eq!(gigaam.runtime_language_hint("ru"), None);
+        assert_eq!(gigaam.vocabulary_use(), VocabularyUse::None);
+    }
+
+    #[test]
     fn recommendations_are_language_specific() {
         let english = choices_for_runtime("en");
         assert_eq!(
@@ -1507,28 +1483,6 @@ mod tests {
             language: "xx".into(),
         };
         assert!(validate(&unknown).is_err());
-    }
-
-    #[test]
-    fn accuracy_is_the_inverse_of_the_word_error_rate() {
-        assert_eq!(
-            definition(TranscriptionModelId::ParakeetUnifiedEnglish)
-                .accuracy_label()
-                .as_deref(),
-            Some("98.4%")
-        );
-        assert_eq!(
-            definition(TranscriptionModelId::SenseVoiceSmall)
-                .accuracy_label()
-                .as_deref(),
-            Some("89.9%")
-        );
-        assert_eq!(
-            definition(TranscriptionModelId::AppleSpeech).accuracy_label(),
-            None
-        );
-        assert_eq!(accuracy_label(0.0), "100.0%");
-        assert_eq!(accuracy_label(112.5), "0.0%");
     }
 
     #[test]
@@ -1657,6 +1611,7 @@ mod tests {
             ),
             (TranscriptionModelId::ParakeetUltra, "parakeet_ultra"),
             (TranscriptionModelId::Nemotron35Asr, "nemotron_3_5_asr"),
+            (TranscriptionModelId::GigaAmV3, "gigaam_v3"),
             (TranscriptionModelId::AppleSpeech, "apple_speech"),
         ] {
             assert_eq!(id.as_str(), name);

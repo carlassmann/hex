@@ -11,7 +11,7 @@ use crate::dictation::context::{ContextSelector, ContextSnapshot};
 use crate::dictation::text_replacements::ReplacementSet;
 use crate::dictation::vocabulary::VocabularyEntry;
 
-const PROTOCOL_PROMPT: &str = "You transform dictated speech into replacement text. Return only the text that should be pasted. Do not add an explanation, label, alternative, or Markdown fence.";
+const PROTOCOL_PROMPT: &str = "You transform dictated speech into replacement text. Return only the text that should be pasted. Do not add an explanation, label, alternative, or Markdown fence.\n\nNumbers: keep every number the speaker said. Never drop, merge, reorder, round, or reinterpret a number, and never add thousands separators or other formatting to a number that the transcript already writes in digits.\n\nLists: unless the profile instructions say otherwise, when the speaker enumerates items (for example \"point one ... point two ...\", \"first ... second ...\", or \"number one ... number two ...\"), keep every item and write them as a numbered list, one item per line (\"1. ...\", \"2. ...\"), without the spoken cue words.";
 const CATALOG_DEADLINE: Duration = Duration::from_secs(10);
 /// Newest one-shot generation route first; older OpenCode V2 builds only serve the later name.
 const GENERATE_ENDPOINTS: [&str; 2] = ["/api/experimental/generate", "/api/generate"];
@@ -27,6 +27,8 @@ pub struct Profile {
     deadline: Duration,
     replacements: ReplacementSet,
     transformations: Vec<String>,
+    /// The mode's own vocabulary, heard and spelled ahead of the shared list.
+    vocabulary: Vec<VocabularyEntry>,
 }
 
 impl Profile {
@@ -39,7 +41,13 @@ impl Profile {
             deadline: Duration::from_secs(30),
             replacements: ReplacementSet::default(),
             transformations: Vec::new(),
+            vocabulary: Vec::new(),
         }
+    }
+
+    pub(crate) fn vocabulary(mut self, vocabulary: Vec<VocabularyEntry>) -> Self {
+        self.vocabulary = vocabulary;
+        self
     }
 
     pub fn ai_enabled(mut self, enabled: bool) -> Self {
@@ -91,6 +99,7 @@ impl Profile {
             mode.transformations.clone(),
             &mode.post_processing,
         )
+        .vocabulary(mode.vocabulary.clone())
     }
 
     /// Builds a runtime profile from persisted settings. A malformed model key
@@ -266,6 +275,11 @@ impl Profiles {
         selected.map_or(&self.default, |selected| &selected.profile)
     }
 
+    /// The selected mode's own vocabulary.
+    pub(crate) fn vocabulary_for(&self, context: &ContextSnapshot) -> Vec<VocabularyEntry> {
+        self.select(context).vocabulary.clone()
+    }
+
     pub fn processes(&self, context: &ContextSnapshot) -> bool {
         let profile = self.select(context);
         profile.ai_enabled || !profile.transformations.is_empty()
@@ -306,7 +320,16 @@ impl Profiles {
         let corrected = profile
             .replacements
             .replace(&self.global.replace(transcript));
-        if !profile.ai_enabled {
+        // A transcript of numbers alone has nothing to rewrite; a model only
+        // turns it into digits and re-punctuates it (#949).
+        let numbers_only = profile.ai_enabled && numbers_only(&corrected);
+        if numbers_only {
+            tracing::info!(
+                profile = profile.name,
+                "dictation post-processing skipped for a numbers-only transcript"
+            );
+        }
+        if !profile.ai_enabled || numbers_only {
             return Processed {
                 text: corrected,
                 observation: None,
@@ -317,7 +340,10 @@ impl Profiles {
             profile,
             &corrected,
             context,
-            &crate::dictation::vocabulary::entries(),
+            &crate::dictation::vocabulary::merged(
+                &profile.vocabulary,
+                &crate::dictation::vocabulary::entries(),
+            ),
         );
         let (text, observation) = generate_observed(
             &prompt,
@@ -340,6 +366,64 @@ impl Profiles {
             transformations: profile.transformations.clone(),
         }
     }
+}
+
+/// Whether a transcript says nothing but numbers: digits or English number
+/// words, with punctuation between them.
+fn numbers_only(transcript: &str) -> bool {
+    const WORDS: &[&str] = &[
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
+        "thirty",
+        "forty",
+        "fifty",
+        "sixty",
+        "seventy",
+        "eighty",
+        "ninety",
+        "hundred",
+        "thousand",
+        "million",
+        "billion",
+    ];
+    /// Words that join numbers but are not numbers themselves.
+    const JOINERS: &[&str] = &["and", "point", "minus", "negative"];
+    let mut any_number = false;
+    for token in transcript.split(|c: char| c.is_whitespace() || c == '-') {
+        let word = token.trim_matches(|c: char| !c.is_alphanumeric());
+        if word.is_empty() {
+            continue;
+        }
+        if word
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '.' || c == ',')
+            || WORDS.iter().any(|w| word.eq_ignore_ascii_case(w))
+        {
+            any_number = true;
+        } else if !JOINERS.iter().any(|w| word.eq_ignore_ascii_case(w)) {
+            return false;
+        }
+    }
+    any_number
 }
 
 /// One generation from OpenCode's default ranked models, for work outside
@@ -1186,6 +1270,35 @@ mod tests {
 
         assert_eq!(processed.text, "Use OpenCode.");
         assert_eq!(processed.transformations, ["lowercase"]);
+        assert!(processed.observation.is_none());
+    }
+
+    #[test]
+    fn numbers_only_transcripts_skip_the_rewrite() {
+        for numbers in [
+            "One, two, three, four, five, six, seven, eight, nine, ten.",
+            "1355",
+            "Twenty-one point five.",
+            "one hundred and forty two",
+        ] {
+            assert!(numbers_only(numbers), "{numbers}");
+        }
+        for speech in [
+            "",
+            "And.",
+            "Point one, the dataset has 1355 evaluation windows.",
+            "Call me at five.",
+        ] {
+            assert!(!numbers_only(speech), "{speech}");
+        }
+
+        let profiles = Profiles::new(Profile::new("default", "Rewrite freely.").ai_enabled(true));
+        let processed = profiles.process_cancellable(
+            "one two three four five",
+            &context("Zed", None),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(processed.text, "one two three four five");
         assert!(processed.observation.is_none());
     }
 

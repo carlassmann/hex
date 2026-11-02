@@ -762,7 +762,9 @@ CoreAudio formats, AppleScript details, or event serialization.
   (resumed at its saved step), or an upgrader from 2.3.1 or earlier whose
   setup isn't ready (#475). Run setup again (Labs) and `hex onboarding reset`
   replay it from the start on every build. Start using Hex records completion
-  only once setup is ready.
+  only once setup is ready. A quiet Skip shows on every page but the last;
+  it ends onboarding at once and records completion, and a model that isn't
+  ready keeps downloading (the one picked, else the recommended one).
 - Onboarding shows its model step only when the scan found a compatible
   model; otherwise Setting up Hex is unchanged and the recommended model
   downloads by itself. The step is one card of radio rows with no buttons or
@@ -1229,7 +1231,8 @@ CoreAudio formats, AppleScript details, or event serialization.
   changes in its own settings arrive as ShortcutsChanged and work at once; Hex
   shows the granted trigger in Settings (row note and the Status hint) and in
   `hex status --json` (`listener.shortcuts`). On GNOME the Linux dictation
-  default is Ctrl+Alt+Space (GNOME keeps Alt+Space), Settings flags a shortcut
+  default is Ctrl+Alt+Space (GNOME keeps Alt+Space; so does KDE Plasma's
+  KRunner, #898), Settings flags a shortcut
   on a key GNOME keeps for itself, and Annotate's shortcut shows beside
   dictation's in General (#723). Enable and Disable
   (window, tray) also save `enable_on_launch`, so a disabled Hex stays disabled
@@ -1467,8 +1470,9 @@ changed code. Macs on 2.3.1 or earlier (Sparkle, `com.kitlangton.hex2`) get
 one informational appcast item, `packaging/macos/legacy-appcast.xml`, that
 links to the new app; they never auto-update into it.
 There is no Swift migration: never import Swift preferences or data, adopt its
-bundle identifier, publish Rust artifacts to its S3 feed, or automatically quit,
-delete, or replace the Swift app. Prefer a website-only informational item in
+bundle identifier, publish Rust artifacts to its S3 feed, or automatically
+delete or replace the Swift app. The one automatic step: once setup is ready,
+Hex asks a running old Hex (2.3.1 or Swift) to quit, leaving it installed. Prefer a website-only informational item in
 the legacy Sparkle feed, with no enclosure, pointing to the new app for manual
 installation and fresh setup. Publish it only after the new artifact is live. See
 `docs/plans/swift-app-handoff.md`. The Rust data root remains unchanged, but the

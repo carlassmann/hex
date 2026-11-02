@@ -230,15 +230,15 @@ fn a_refused_note_sits_with_the_shortcut_the_desktop_kept() {
 #[test]
 fn each_panes_advanced_fold_starts_closed_and_stays_its_own() {
     let mut rt = runtime("portal", true, TALL_SIZE);
-    assert!(rt.find("double-tap-only").is_none(), "closed at first");
+    assert!(
+        rt.find("avoid-bluetooth-microphone").is_none(),
+        "closed at first"
+    );
     tap(&mut rt, "advanced-toggle");
     tap(&mut rt, "advanced-toggle");
     tap(&mut rt, "advanced-toggle");
-    rt.state.settings.double_tap_lock = true;
-    rt.state.settings.double_tap_only = true;
-    rt.invalidate();
     settle(&mut rt);
-    assert!(rt.find("double-tap-only").is_some());
+    assert!(rt.find("avoid-bluetooth-microphone").is_some());
     assert_eq!(rt.state.advanced, vec![Pane::General]);
 }
 
@@ -672,7 +672,7 @@ fn every_scene_stops_asking_for_frames() {
         for _ in 0..150 {
             rt.frame(1.0 / 30.0);
         }
-        if *scene != "shortcut-explainer-motion" {
+        if *scene != "shortcut-mode-motion" {
             moving.extend(
                 rt.elements()
                     .into_iter()
@@ -890,19 +890,21 @@ fn a_press_in_a_sidebar_gap_selects_the_nearest_item() {
 fn a_settings_row_shows_no_hover_or_press_of_its_own() {
     let mut rt = runtime("portal", true, TALL_SIZE);
     open_advanced(&mut rt, Pane::General);
-    let before = rt.state.settings.double_tap_lock;
-    let (x, y) = rt.find("double-tap/lead/copy").expect("the row's title");
+    let before = rt.state.settings.avoid_bluetooth_microphone;
+    let (x, y) = rt
+        .find("avoid-bluetooth-microphone/lead/copy")
+        .expect("the row's title");
     rt.pointer_move(x, y);
     rt.frame(1.0 / 120.0);
-    let row = element(&rt, "double-tap");
+    let row = element(&rt, "avoid-bluetooth-microphone");
     assert_eq!((row.hover, row.fill), (0.0, rune::Color::TRANSPARENT));
     rt.pointer_down(x, y);
     rt.frame(1.0 / 120.0);
-    assert_eq!(element(&rt, "double-tap").press, 0.0);
+    assert_eq!(element(&rt, "avoid-bluetooth-microphone").press, 0.0);
     rt.pointer_up(x, y);
     settle(&mut rt);
     assert_ne!(
-        rt.state.settings.double_tap_lock, before,
+        rt.state.settings.avoid_bluetooth_microphone, before,
         "pressing the row still flips it"
     );
 }
@@ -939,8 +941,8 @@ fn segments_and_switch_tracks_hover_at_once() {
     let mut rt = runtime("portal", true, TALL_SIZE);
     open_advanced(&mut rt, Pane::General);
     let targets = [
-        rt.find("shortcut-mode-control-trigger"),
-        rt.find("double-tap/switch"),
+        rt.find("speech-engine-control-trigger"),
+        rt.find("avoid-bluetooth-microphone/switch"),
     ];
     for (target, name) in targets.into_iter().zip(["select", "switch"]) {
         let (x, y) = target.unwrap_or_else(|| panic!("no {name}"));
@@ -1429,7 +1431,7 @@ fn mode_applications_refuse_one_another_modes_use() {
 #[test]
 fn the_transcription_picker_asks_the_service_for_a_model() {
     let mut rt = runtime("picker", true, PANE_SIZE);
-    tap(&mut rt, "model2/top/actions/choose-model");
+    tap(&mut rt, "model2/action/cell/slot/choose-model");
     assert!(matches!(
         sent(&rt),
         [Request::ChooseModel {
@@ -1445,13 +1447,24 @@ fn the_transcription_picker_asks_the_service_for_a_model() {
     assert!(!rt.state.picker.open);
 }
 
-/// The card index of `model` in the picker over `language`.
-fn picker_card(language: &str, model: TranscriptionModelId) -> String {
-    let index = crate::transcription::models::picker_models(language)
-        .iter()
-        .position(|(candidate, _)| candidate.id == model)
-        .expect("every available model is listed");
-    format!("model{index}")
+/// Scrolls the full model list until `key` is inside it, then presses it.
+fn tap_in_model_list(rt: &mut Runtime<Ui>, key: &str) {
+    for _ in 0..400 {
+        let target = element(rt, key).rect;
+        let list = element(rt, "model-scroll").rect;
+        let middle = target[1] + target[3] / 2.0;
+        if middle > list[1] && middle < list[1] + list[3] {
+            break;
+        }
+        let dy = if middle > list[1] + list[3] {
+            20.0
+        } else {
+            -20.0
+        };
+        rt.wheel(list[0] + list[2] / 2.0, list[1] + list[3] / 2.0, dy);
+        rt.frame(1.0 / 60.0);
+    }
+    tap(rt, key);
 }
 
 #[test]
@@ -1464,13 +1477,15 @@ fn a_model_without_the_saved_language_falls_back_to_its_own_visibly() {
     rt.state.picker.installed = Some(Vec::new());
     rt.invalidate();
     settle(&mut rt);
-    let card = picker_card("he", TranscriptionModelId::ParakeetUnifiedEnglish);
+    // Parakeet is folded away with the models that don't speak Hebrew.
+    tap(&mut rt, "more-models");
+    tap(&mut rt, "other-languages");
     let shown = texts(&rt);
     assert!(
-        shown.contains(&"Doesn't support Hebrew; switches the language to English".to_owned()),
+        shown.contains(&"Choosing it switches the language to English".to_owned()),
         "{shown:?}"
     );
-    tap(&mut rt, &format!("{card}/top/actions/choose-model"));
+    tap_in_model_list(&mut rt, "model-parakeet_unified_en/actions/choose-model");
     assert_eq!(
         sent(&rt),
         [Request::ChooseModel {
@@ -1764,7 +1779,7 @@ fn the_sound_sets_sheet_plays_and_chooses_sets() {
 #[test]
 fn a_download_in_progress_can_be_cancelled() {
     let mut rt = runtime("picker-downloading", true, PANE_SIZE);
-    tap(&mut rt, "model1/top/actions/cancel-model");
+    tap(&mut rt, "model1/action/cell/slot/preparing/cancel-model");
     assert!(matches!(sent(&rt), [Request::CancelModel]));
 }
 

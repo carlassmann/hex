@@ -23,6 +23,9 @@ const CALL_ENDED_AFTER: Duration = Duration::from_secs(3);
 /// Observations further apart than this (a sleeping Mac, a stalled loop) do
 /// not make one run: the clock restarts rather than counting the gap.
 const MAX_OBSERVATION_GAP: Duration = Duration::from_secs(10);
+/// A call that drops off one microphone check (or two, on a slow loop) and
+/// is back right after keeps its time toward the offer (#835).
+const DROPOUT_GRACE: Duration = Duration::from_secs(2);
 /// A page the browser showed while it held the microphone still names the
 /// call this long after it was last read.
 const BROWSER_PAGE_MEMORY: Duration = Duration::from_secs(60);
@@ -261,6 +264,49 @@ impl CallPresence {
     }
 }
 
+/// How long an automatic recording keeps going after its call ended, under
+/// Labs › Stop when the call ends (#835).
+pub const AUTO_STOP_GRACE: Duration = Duration::from_secs(30);
+
+/// Labs › Stop when the call ends: the deadline at which a recording Hex
+/// started on its own stops, armed when [`CallPresence`] reports the call
+/// ended and dropped when the call app comes back or the user keeps
+/// recording.
+#[derive(Default)]
+pub struct AutoStop {
+    deadline: Option<Instant>,
+}
+
+impl AutoStop {
+    /// The call ended: stop after the grace.
+    pub fn arm(&mut self) {
+        self.arm_at(Instant::now());
+    }
+
+    fn arm_at(&mut self, now: Instant) {
+        self.deadline = Some(now + AUTO_STOP_GRACE);
+    }
+
+    /// The call app came back, the user kept recording, or the toggle is
+    /// off: nothing stops. Returns whether a stop was pending.
+    pub fn disarm(&mut self) -> bool {
+        self.deadline.take().is_some()
+    }
+
+    /// Whether the grace has run out; true once, then disarmed.
+    pub fn due(&mut self) -> bool {
+        self.due_at(Instant::now())
+    }
+
+    fn due_at(&mut self, now: Instant) -> bool {
+        if self.deadline.is_some_and(|deadline| now >= deadline) {
+            self.deadline = None;
+            return true;
+        }
+        false
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MeetingSource {
@@ -410,7 +456,11 @@ impl MeetingDetector {
         now_ms: i64,
     ) -> Option<MeetingCandidate> {
         let Some(candidate) = candidate else {
-            self.pending = None;
+            if self.pending.as_ref().is_some_and(|pending| {
+                now.saturating_duration_since(pending.run.last) > DROPOUT_GRACE
+            }) {
+                self.pending = None;
+            }
             let since = *self.last_present.get_or_insert(now);
             if now.saturating_duration_since(since) >= ABSENT_FOR_RESET {
                 self.offered = None;
@@ -1074,6 +1124,40 @@ mod tests {
     }
 
     #[test]
+    fn an_ended_call_stops_after_the_grace_unless_it_comes_back_or_is_kept() {
+        let base = Instant::now();
+        let at = |ms: u64| base + Duration::from_millis(ms);
+        let grace = AUTO_STOP_GRACE.as_millis() as u64;
+        let mut stop = AutoStop::default();
+        assert!(!stop.due_at(at(0)), "nothing is armed");
+
+        // The call ended: it stops once the grace runs out, once.
+        let mut presence = CallPresence::default();
+        assert!(!presence.observe_at(false, at(0)));
+        assert!(presence.observe_at(false, at(3_000)));
+        stop.arm_at(at(3_000));
+        assert!(!stop.due_at(at(3_000 + grace - 500)));
+        assert!(stop.due_at(at(3_000 + grace)));
+        assert!(!stop.due_at(at(3_000 + grace + 500)));
+
+        // The call app is back during the grace: nothing stops.
+        stop.arm_at(at(0));
+        assert!(!presence.observe_at(true, at(10_000)));
+        assert!(stop.disarm());
+        assert!(!stop.due_at(at(grace + 1_000)));
+
+        // Keep recording: this absence never stops it; leaving again re-arms.
+        stop.arm_at(at(0));
+        assert!(stop.disarm());
+        assert!(!stop.due_at(at(grace * 2)));
+        assert!(!presence.observe_at(false, at(20_000)));
+        assert!(!presence.observe_at(false, at(21_000)));
+        assert!(presence.observe_at(false, at(23_000)));
+        stop.arm_at(at(23_000));
+        assert!(stop.due_at(at(23_000 + grace)));
+    }
+
+    #[test]
     fn classifies_helper_and_host_microphone_applications() {
         let brave_helper = ActiveMicrophoneApplication {
             pid: 2352,
@@ -1343,11 +1427,11 @@ mod tests {
         )];
         let mut watch = Watch::new();
         assert!(watch.run(Some(&problems), &always, 6_000).is_empty());
-        assert!(watch.run(None, &always, 500).is_empty());
+        assert!(watch.run(None, &always, 5_000).is_empty());
         assert!(watch.run(Some(&problems), &always, 20_000).is_empty());
         assert_eq!(
             watch.run(Some(&problems), &always, 500),
-            [(26_500, Detection::Record(problems))]
+            [(31_000, Detection::Record(problems))]
         );
     }
 
@@ -1400,11 +1484,44 @@ mod tests {
         );
         let candidate = candidate_from_microphone(&brave(), &problems).unwrap();
         let mut watch = Watch::new();
-        // A six-second voice note, then the mic closes.
+        // A six-second voice note, then the mic closes for a few seconds.
         assert!(watch.run(Some(&candidate), &[], 6_000).is_empty());
-        assert!(watch.run(None, &[], 500).is_empty());
+        assert!(watch.run(None, &[], 5_000).is_empty());
         assert!(watch.run(Some(&candidate), &[], 20_000).is_empty());
         assert_eq!(watch.run(Some(&candidate), &[], 500).len(), 1);
+    }
+
+    #[test]
+    fn a_missed_microphone_check_does_not_restart_the_wait_for_an_offer() {
+        let app = ActiveMicrophoneApplication {
+            pid: 7,
+            bundle_id: "net.whatsapp.WhatsApp".into(),
+            name: "WhatsApp".into(),
+        };
+        let call = candidate_from_microphone(&app, &ContextSnapshot::default()).unwrap();
+        // One check misses the call 10 s in: still offered at 20 s.
+        let mut watch = Watch::new();
+        assert!(watch.run(Some(&call), &[], 10_000).is_empty());
+        assert!(watch.run(None, &[], 500).is_empty());
+        assert!(watch.run(Some(&call), &[], 9_500).is_empty());
+        assert_eq!(offered(&watch.run(Some(&call), &[], 500)), [20_000]);
+
+        // On a slow loop, two missed checks in a row are still a dropout.
+        let mut watch = Watch::new();
+        assert!(watch.run_every(Some(&call), &[], 9_900, 900).is_empty());
+        assert!(watch.run_every(None, &[], 1_800, 900).is_empty());
+        assert!(watch.run_every(Some(&call), &[], 9_000, 900).is_empty());
+        assert_eq!(
+            offered(&watch.run_every(Some(&call), &[], 900, 900)),
+            [20_700]
+        );
+
+        // A longer release is the call (or voice note) ending: start over.
+        let mut watch = Watch::new();
+        assert!(watch.run(Some(&call), &[], 10_000).is_empty());
+        assert!(watch.run(None, &[], 3_000).is_empty());
+        assert!(watch.run(Some(&call), &[], 20_000).is_empty());
+        assert_eq!(offered(&watch.run(Some(&call), &[], 500)), [33_000]);
     }
 
     #[test]

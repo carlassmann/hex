@@ -44,6 +44,7 @@ mod modes;
 mod onboarding;
 mod onboarding_kit;
 mod output;
+mod paste_access;
 mod picker;
 mod platform;
 mod platform_settings;
@@ -52,6 +53,7 @@ mod practice;
 #[cfg(hex_capture)]
 mod scrawl;
 mod settings;
+mod shortcut_mode;
 mod sidebar_update;
 mod sound_sets;
 mod spark;
@@ -855,8 +857,14 @@ impl Ui {
         };
         crate::desktop::i18n::apply(settings.ui_language.as_deref());
         let store = host::history(&connect, settings.history_retention);
+        #[cfg(target_os = "linux")]
+        let paste = connect.is_some().then(paste_access::detect).flatten();
         let mut ui = Self::with(settings, Service::Pending(connect));
         ui.error = error;
+        #[cfg(target_os = "linux")]
+        {
+            ui.platform.paste = paste;
+        }
         // A mouse-button shortcut went back to its default: say so once.
         if ui.settings.mouse_shortcut_notice {
             ui.settings.mouse_shortcut_notice = false;
@@ -1227,7 +1235,7 @@ impl Ui {
 }
 
 /// Shortcut recording takes every key; Command-1 through 9 open the
-/// sidebar's panes in order; otherwise Escape closes the shortcut explainer,
+/// sidebar's panes in order; otherwise Escape closes Shortcut mode,
 /// the sound sets sheet, the picker, or the open menu.
 fn on_key(ui: &mut Ui, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     if settings::on_key(ui, event, tx) {
@@ -1342,6 +1350,7 @@ fn poll(ui: &mut Ui, clock: f64, tx: &mut Tx) -> bool {
     }
     let now = Instant::now();
     let mut changed = ui.save_drafts(now);
+    changed |= paste_access::poll(ui);
     changed |= labs::poll_flash(ui, now);
     // The OpenCode catalog is read only while the pane that uses it shows.
     changed |= ui.models.poll(
@@ -2050,24 +2059,27 @@ const SCENES: &[Scene] = &[
         *ui = portal_fixture();
         picker::parakeet_ultra_fixture(ui);
     }),
-    // The picker's Add model file….
+    // Every model, with the full list's Add model file….
     ("picker-custom-models", |ui| {
         *ui = portal_fixture();
-        picker::fixture(ui, None);
+        picker::all_fixture(ui);
     }),
     // Found on this computer: Parakeet v3's exact file and an untested Whisper.
     ("picker-found", |ui| {
         *ui = portal_fixture();
         ui.found.models = found::fixture();
-        picker::fixture(ui, None);
+        picker::all_fixture(ui);
     }),
-    // Japanese saved: the English-only models say they switch the language.
+    // Japanese saved: Japanese models compared, SenseVoice downloading.
     ("picker-japanese", |ui| {
         *ui = portal_fixture();
-        ui.settings.transcription.model = TranscriptionModelId::WhisperLargeV3Turbo;
-        ui.settings.transcription.language = "ja".into();
-        ui.picker.installed = Some(vec![TranscriptionModelId::WhisperLargeV3Turbo]);
-        picker::fixture(ui, None);
+        picker::japanese_fixture(ui, Some(TranscriptionModelId::SenseVoiceSmall));
+    }),
+    // Every model: the English-only ones fold away and switch the language.
+    ("picker-japanese-all", |ui| {
+        *ui = portal_fixture();
+        picker::japanese_fixture(ui, None);
+        (ui.picker.view, ui.picker.others_open) = (picker::View::All, true);
     }),
     // Parakeet chosen over Japanese: Settings names the language change.
     ("language-fallback", |ui| {
@@ -2084,16 +2096,10 @@ const SCENES: &[Scene] = &[
         ui.picker.installed = Some(vec![TranscriptionModelId::WhisperLargeV3Turbo]);
         ui.open = Some(Menu::Pick("transcription-language"));
     }),
-    ("shortcut-explainer", |ui| {
-        *ui = mac_fixture();
-        ui.settings.double_tap_lock = true;
-        explainer::fixture(ui, Some(explainer::SNAPSHOT_MS));
-    }),
-    ("shortcut-explainer-toggle", |ui| {
-        *ui = mac_fixture();
-        ui.settings.shortcut_mode = crate::dictation::ShortcutMode::Toggle;
-        explainer::fixture(ui, Some(explainer::SNAPSHOT_MS));
-    }),
+    ("shortcut-mode", shortcut_mode::scene_modifier),
+    ("shortcut-mode-key", shortcut_mode::scene_key),
+    ("shortcut-mode-chord", shortcut_mode::scene_chord),
+    ("shortcut-mode-motion", shortcut_mode::scene_motion),
     // The Shortcut row with a modifier-only shortcut, Left Option, beside
     // its side picker (macOS), in each face of the recorder.
     ("shortcut-row", |ui| shortcut_row(ui, Capture::Idle)),
@@ -2125,20 +2131,6 @@ const SCENES: &[Scene] = &[
             },
         );
     }),
-    // A three-key chord: Control-Option-Space.
-    ("shortcut-explainer-chord", |ui| {
-        *ui = mac_fixture();
-        ui.settings.double_tap_lock = true;
-        let modifiers = &mut ui.settings.dictation_hotkey.modifiers;
-        modifiers.control = modifiers.option;
-        explainer::fixture(ui, Some(explainer::SNAPSHOT_MS));
-    }),
-    // Loops, for `--frames` clips.
-    ("shortcut-explainer-motion", |ui| {
-        *ui = mac_fixture();
-        ui.settings.double_tap_lock = true;
-        explainer::fixture(ui, None);
-    }),
     // The first run on Linux (Windows is the same window): setting up Hex
     // with nothing found, the model step with models found here, the demo,
     // waiting for the model, the practice game, and Hex is ready.
@@ -2157,6 +2149,10 @@ const SCENES: &[Scene] = &[
     }),
     ("onboarding-waiting", |ui| {
         first_run(ui, FirstRun::Downloading, Page::Waiting)
+    }),
+    // GNOME and KDE on Wayland: why the desktop asks before the first paste.
+    ("onboarding-paste", |ui| {
+        first_run(ui, FirstRun::PasteAccess, Page::Permissions)
     }),
     ("onboarding-try", |ui| {
         first_run(ui, FirstRun::Ready, Page::Try)
@@ -2581,6 +2577,9 @@ enum FirstRun {
     Failed,
     /// The model is installed.
     Ready,
+    /// The model is installed, and the desktop asks before Hex's first
+    /// paste (GNOME and KDE on Wayland).
+    PasteAccess,
 }
 
 fn first_run(ui: &mut Ui, state: FirstRun, page: Page) {
@@ -2595,12 +2594,15 @@ fn first_run(ui: &mut Ui, state: FirstRun, page: Page) {
                 view.transcription.error = Some("The connection was reset.".into());
             }
         }
-        FirstRun::Ready => {
+        FirstRun::Ready | FirstRun::PasteAccess => {
             ui.picker.installed = Some(vec![ui.settings.transcription.model]);
             if let Some(view) = &mut ui.view {
                 view.transcription.preparing = None;
             }
         }
+    }
+    if state == FirstRun::PasteAccess {
+        ui.platform.paste = Some(paste_access::PasteAccess::Ask);
     }
     onboarding::poll(ui);
     onboarding_kit::live::fixture(ui, page);

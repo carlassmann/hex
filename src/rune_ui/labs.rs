@@ -206,6 +206,16 @@ fn rows(ui: &Ui) -> Vec<Row> {
             tr("Subtitle export"),
             tr("Export meeting transcripts as SRT or VTT subtitles with hex meetings show"),
         ));
+        // macOS's meeting controller reads the call app's audio output, so
+        // Linux renders of macOS scenes leave it out.
+        if cfg!(target_os = "macos") {
+            rows.push(row(
+                Feature::StopWhenCallEnds,
+                &TIMER,
+                tr("Stop when the call ends"),
+                tr("Stop a recording Hex started on its own 30 s after the call app leaves the microphone and goes quiet"),
+            ));
+        }
     }
     rows.push(row(
         Feature::VocabularyBiasing,
@@ -291,6 +301,15 @@ fn rows(ui: &Ui) -> Vec<Row> {
             &KEYBOARD,
             tr("Special keys alone"),
             tr("Use Menu, Pause, or Scroll Lock as a shortcut without a modifier, such as Caps Lock remapped to Menu"),
+        ));
+    }
+    // Linux's and Windows' engines transcribe a whole clip on the CPU.
+    if caps.os != super::platform::Os::Macos {
+        rows.push(row(
+            Feature::SkipPauses,
+            &TIMER,
+            tr("Skip long pauses"),
+            tr("Shorten long pauses before a whole dictation goes to the model, so slow computers paste sooner"),
         ));
     }
     rows.push(row(
@@ -401,6 +420,8 @@ fn row_key(feature: Feature) -> &'static str {
         Feature::StandaloneSpecialKeys => "lab-special-keys",
         Feature::HistoryStats => "lab-history-stats",
         Feature::RecentDictations => "lab-recent-dictations",
+        Feature::SkipPauses => "lab-skip-pauses",
+        Feature::StopWhenCallEnds => "lab-stop-when-call-ends",
     }
 }
 

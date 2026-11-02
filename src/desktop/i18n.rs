@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 mod french;
 mod portuguese;
+mod traditional_chinese;
 
 /// A persisted interface-language code (`None` follows the system) and its
 /// native name.
@@ -18,12 +19,14 @@ pub(crate) type LanguageChoice = (Option<&'static str>, &'static str);
 
 /// The selectable interface languages: persisted code and native name. The
 /// leading `None` entry follows the system display language. Português
-/// (Brasil) and Français have not had a native speaker's review yet.
+/// (Brasil), Français, and 繁體中文 have not had a native speaker's review
+/// yet.
 pub(crate) const LANGUAGE_CHOICES: &[LanguageChoice] = &[
     (None, "System"),
     (Some("en"), "English"),
     (Some("pl"), "Polski"),
-    (Some("zh"), "中文"),
+    (Some("zh"), "简体中文"),
+    (Some("zh-Hant"), "繁體中文"),
     (Some("ja"), "日本語"),
     (Some("de"), "Deutsch"),
     (Some("es"), "Español"),
@@ -68,6 +71,9 @@ const ENGLISH: u8 = 255;
 const PORTUGUESE_COLUMN: u8 = 6;
 /// French, kept in its own table ([`french::TRANSLATIONS`]).
 const FRENCH_COLUMN: u8 = 7;
+/// Traditional Chinese, drawn from the Simplified column
+/// ([`traditional_chinese::table`]).
+const TRADITIONAL_CHINESE_COLUMN: u8 = 8;
 
 /// The column for a persisted code; `pt` (any Portuguese system language)
 /// is Brazilian Portuguese, and `fr` any French one.
@@ -75,6 +81,7 @@ fn column_for_code(code: &str) -> u8 {
     match code {
         "pl" => 0,
         "zh" => 1,
+        "zh-Hant" => TRADITIONAL_CHINESE_COLUMN,
         "ja" => 2,
         "de" => 3,
         "es" => 4,
@@ -90,15 +97,35 @@ fn column_for_code(code: &str) -> u8 {
 pub(crate) fn apply(setting: Option<&str>) {
     let code = match setting {
         Some(code) => column_for_code(code),
-        None => column_for_language_tag(&preferred_language()),
+        None => column_for_language_tag(&preferred_locale()),
     };
     set_current(code);
 }
 
-/// The column for a system language tag such as `zh-Hans-CN` or `pl`;
-/// unknown or empty tags stay English.
+/// The column for a system locale such as `zh-Hans-CN`, `zh_TW.UTF-8`, or
+/// `pl`; unknown or empty tags stay English. Chinese with the Hant script,
+/// or the Taiwan, Hong Kong, or Macau region, is Traditional Chinese.
 fn column_for_language_tag(tag: &str) -> u8 {
-    primary_subtag(tag).map_or(ENGLISH, |code| column_for_code(&code))
+    // POSIX locales carry an encoding and modifier: `zh_TW.UTF-8@euro`.
+    let tag = tag.split(['.', '@']).next().unwrap_or_default();
+    match primary_subtag(tag).as_deref() {
+        Some("zh") if is_traditional_chinese(tag) => TRADITIONAL_CHINESE_COLUMN,
+        Some(code) => column_for_code(code),
+        None => ENGLISH,
+    }
+}
+
+/// Whether a Chinese locale's script or region asks for Traditional
+/// characters. An explicit script wins over the region (`zh-Hans-HK`).
+fn is_traditional_chinese(tag: &str) -> bool {
+    for subtag in tag.split(['-', '_']).skip(1) {
+        match subtag.trim().to_ascii_lowercase().as_str() {
+            "hant" | "tw" | "hk" | "mo" => return true,
+            "hans" => return false,
+            _ => {}
+        }
+    }
+    false
 }
 
 pub(crate) fn system_language() -> String {
@@ -116,6 +143,33 @@ pub(crate) fn system_language() -> String {
     }
 }
 
+/// The system locale with its script and region, for the interface
+/// language: the Windows user locale or the POSIX locale variables.
+fn system_locale() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        windows_user_locale()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        locale_from_env(
+            std::env::var("LC_ALL").ok().as_deref(),
+            std::env::var("LC_MESSAGES").ok().as_deref(),
+            std::env::var("LANG").ok().as_deref(),
+        )
+    }
+}
+
+/// The person's first preferred locale in full (`zh-Hant-TW`), for the
+/// interface language; on macOS the system's language list.
+fn preferred_locale() -> String {
+    #[cfg(target_os = "macos")]
+    if let Some(locale) = macos_preferred_locale() {
+        return locale;
+    }
+    system_locale()
+}
+
 /// The person's first preferred language, for choosing a speech model. On
 /// macOS this is the system's language list, which apps opened from Finder
 /// see without `LANG`.
@@ -129,6 +183,12 @@ pub(crate) fn preferred_language() -> String {
 
 #[cfg(target_os = "macos")]
 fn macos_preferred_language() -> Option<String> {
+    primary_subtag(&macos_preferred_locale()?)
+}
+
+/// The first entry of `NSLocale.preferredLanguages`, such as `zh-Hant-TW`.
+#[cfg(target_os = "macos")]
+fn macos_preferred_locale() -> Option<String> {
     use objc2::msg_send;
     use objc2::rc::Retained;
     use objc2::runtime::AnyClass;
@@ -137,8 +197,7 @@ fn macos_preferred_language() -> Option<String> {
     let class = AnyClass::get(c"NSLocale")?;
     let languages: Option<Retained<NSArray<NSString>>> =
         unsafe { msg_send![class, preferredLanguages] };
-    let first = languages?.firstObject()?.to_string();
-    primary_subtag(&first)
+    Some(languages?.firstObject()?.to_string())
 }
 
 /// `pt-BR` and `zh-Hans-CN` yield `pt` and `zh`.
@@ -150,6 +209,16 @@ fn primary_subtag(tag: &str) -> Option<String> {
 /// The primary subtag of the Windows user locale: `pl-PL` yields `pl`.
 #[cfg(target_os = "windows")]
 fn windows_user_language() -> String {
+    windows_user_locale()
+        .split(['-', '_'])
+        .next()
+        .unwrap_or("en")
+        .to_ascii_lowercase()
+}
+
+/// The Windows user locale name in full, such as `zh-TW`; `en` if unread.
+#[cfg(target_os = "windows")]
+fn windows_user_locale() -> String {
     use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
     const LOCALE_NAME_CAPACITY: usize = 85;
     let mut buffer = [0_u16; LOCALE_NAME_CAPACITY];
@@ -157,12 +226,7 @@ fn windows_user_language() -> String {
     if length <= 1 {
         return "en".into();
     }
-    let locale = String::from_utf16_lossy(&buffer[..length as usize - 1]);
-    locale
-        .split(['-', '_'])
-        .next()
-        .unwrap_or("en")
-        .to_ascii_lowercase()
+    String::from_utf16_lossy(&buffer[..length as usize - 1])
 }
 
 /// The primary language subtag from POSIX locale variables, in their
@@ -188,12 +252,31 @@ fn language_from_env(
         .unwrap_or_default()
 }
 
+/// The first set POSIX locale variable in full, in the same precedence as
+/// [`language_from_env`]: `zh_TW.UTF-8` stays `zh_TW.UTF-8`.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
+fn locale_from_env(lc_all: Option<&str>, lc_messages: Option<&str>, lang: Option<&str>) -> String {
+    [lc_all, lc_messages, lang]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|value| !value.is_empty() && *value != "C" && *value != "POSIX")
+        .unwrap_or_default()
+        .to_owned()
+}
+
 /// Translate one UI string. Returns the input unchanged for English or for
 /// strings missing from the table, so dynamic values pass through safely.
 pub(crate) fn tr(english: &str) -> &str {
     let column = current();
     if column == ENGLISH {
         return english;
+    }
+    if column == TRADITIONAL_CHINESE_COLUMN {
+        return match traditional_chinese::table().get(english) {
+            Some(text) => text.as_str(),
+            None => english,
+        };
     }
     let table = match column {
         PORTUGUESE_COLUMN => portuguese::table(),
@@ -258,6 +341,11 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("In Toggle mode, hold the shortcut to dictate until you let go; a short tap still starts and stops", ["W trybie przełączania przytrzymaj skrót, aby dyktować do puszczenia; krótkie stuknięcie nadal uruchamia i zatrzymuje", "在切换模式下，按住快捷键即可听写，松开即结束；轻点仍可开始和停止", "切り替えモードでショートカットを長押しすると、離すまで音声入力します。短いタップでは従来どおり開始と停止をします", "Im Umschaltmodus diktierst du, solange du das Kürzel hältst; kurzes Tippen startet und stoppt weiterhin", "En el modo alternar, mantén el atajo para dictar hasta soltarlo; un toque corto sigue iniciando y deteniendo", "У режимі перемикання утримуйте комбінацію, щоб диктувати, доки не відпустите; коротке торкання й далі запускає та зупиняє"]),
     ("Copy recent dictations", ["Kopiowanie ostatnich dyktowań", "复制最近的听写", "最近の音声入力をコピー", "Letzte Diktate kopieren", "Copiar dictados recientes", "Копіювання останніх диктувань"]),
     ("Copy one of your last five dictations from the menu bar, under Paste Last Dictation", ["Kopiuj jedno z pięciu ostatnich dyktowań z paska menu, pod Wklej ostatnie dyktowanie", "从菜单栏“粘贴上次听写”下方复制最近五条听写中的一条", "メニューバーの「最後の音声入力を貼り付け」の下から、直近 5 件の音声入力のいずれかをコピーします", "Eines deiner letzten fünf Diktate in der Menüleiste unter „Letztes Diktat einfügen“ kopieren", "Copia uno de tus últimos cinco dictados desde la barra de menús, bajo Pegar último dictado", "Копіюйте одне з п'яти останніх диктувань у рядку меню, під «Вставити останнє диктування»"]),
+    ("Skip long pauses", ["Pomijaj długie pauzy", "跳过长停顿", "長い間を飛ばす", "Lange Pausen überspringen", "Omitir pausas largas", "Пропускати довгі паузи"]),
+    ("Shorten long pauses before a whole dictation goes to the model, so slow computers paste sooner", ["Skraca długie pauzy, zanim całe dyktowanie trafi do modelu, więc wolne komputery wklejają szybciej", "在整段听写交给模型前缩短长停顿，让较慢的电脑更快粘贴", "音声入力全体をモデルに渡す前に長い間を短くし、遅いコンピュータでも早く貼り付けます", "Kürzt lange Pausen, bevor ein ganzes Diktat ans Modell geht, damit langsame Computer schneller einfügen", "Acorta las pausas largas antes de que un dictado completo llegue al modelo, para que los ordenadores lentos peguen antes", "Скорочує довгі паузи, перш ніж усе диктування потрапить до моделі, щоб повільні комп’ютери вставляли швидше"]),
+    ("Stop when the call ends", ["Zatrzymuj po zakończeniu rozmowy", "通话结束时停止", "通話が終わったら停止", "Stoppen, wenn der Anruf endet", "Detener al terminar la llamada", "Зупиняти, коли дзвінок завершиться"]),
+    ("Stop a recording Hex started on its own 30 s after the call app leaves the microphone and goes quiet", ["Zatrzymuje nagranie rozpoczęte samodzielnie przez Hex 30 s po tym, jak aplikacja rozmowy zwolni mikrofon i ucichnie", "Hex 自动开始的录制会在通话应用释放麦克风并静音 30 秒后停止", "Hex が自動で始めた録音を、通話アプリがマイクを離れて音が止まってから 30 秒後に停止します", "Beendet eine Aufnahme, die Hex selbst gestartet hat, 30 s nachdem die Anruf-App das Mikrofon freigibt und verstummt", "Detiene una grabación que Hex inició por su cuenta 30 s después de que la app de llamadas suelte el micrófono y se quede en silencio", "Зупиняє запис, який Hex почав сам, через 30 с після того, як програма дзвінка звільнить мікрофон і затихне"]),
+    ("Hex stops recording in 30 s unless you keep recording.", ["Hex zatrzyma nagrywanie za 30 s, chyba że je kontynuujesz.", "除非你继续录制，Hex 将在 30 秒后停止录制。", "録音を続けない場合、Hex は 30 秒後に録音を停止します。", "Hex beendet die Aufnahme in 30 s, außer du nimmst weiter auf.", "Hex dejará de grabar en 30 s a menos que sigas grabando.", "Hex зупинить запис через 30 с, якщо ви не продовжите запис."]),
     ("Record your screen, draw on it, and talk over it", ["Nagrywaj ekran, rysuj po nim i mów w trakcie", "录制屏幕，边画边说", "画面を録画しながら描き、話します", "Bildschirm aufnehmen, darauf zeichnen und dazu sprechen", "Graba la pantalla, dibuja sobre ella y habla mientras tanto", "Записуйте екран, малюйте на ньому й коментуйте голосом"]),
     ("Hex Microphone virtual input and real-time voice filters", ["Wirtualne wejście Hex Microphone i filtry głosu na żywo", "Hex Microphone 虚拟输入与实时声音滤镜", "Hex Microphone 仮想入力とリアルタイムのボイスフィルター", "Virtueller Eingang Hex Microphone und Echtzeit-Stimmfilter", "Entrada virtual Hex Microphone y filtros de voz en tiempo real", "Віртуальний вхід Hex Microphone та голосові фільтри наживо"]),
     ("Live text", ["Tekst na żywo", "实时文字", "ライブテキスト", "Live-Text", "Texto en vivo", "Текст наживо"]),
@@ -352,7 +440,6 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("{model} needs Labs › Parakeet Ultra, so Hex uses {fallback} until you turn it on or choose another model", ["{model} wymaga Laboratorium › Parakeet Ultra, więc Hex używa {fallback}, dopóki go nie włączysz albo nie wybierzesz innego modelu", "{model} 需要开启实验室 › Parakeet Ultra，因此在你开启它或选择其他模型之前，Hex 将使用 {fallback}", "{model} にはラボ › Parakeet Ultra が必要なため、オンにするか別のモデルを選ぶまで Hex は {fallback} を使います", "{model} braucht Labs › Parakeet Ultra, daher verwendet Hex {fallback}, bis du es aktivierst oder ein anderes Modell wählst", "{model} necesita Labs › Parakeet Ultra, así que Hex usa {fallback} hasta que lo actives o elijas otro modelo", "{model} потребує Лабораторія › Parakeet Ultra, тож Hex використовує {fallback}, доки ви її не увімкнете або не виберете іншу модель"]),
     ("Benchmark details", ["Szczegóły testów porównawczych", "基准测试详情", "ベンチマークの詳細", "Benchmark-Details", "Detalles de las pruebas", "Деталі тестів"]),
     ("Show each model's raw error rate, benchmark, and source in the Local transcription picker", ["Pokazuje surowy współczynnik błędów, test i źródło każdego modelu na liście lokalnej transkrypcji", "在本地转录模型列表中显示每个模型的原始错误率、基准测试和来源", "ローカル文字起こしの一覧に、各モデルの生のエラー率、ベンチマーク、出典を表示します", "Zeigt in der Liste der lokalen Transkription die rohe Fehlerrate, den Benchmark und die Quelle jedes Modells", "Muestra la tasa de error sin procesar, la prueba y la fuente de cada modelo en la lista de transcripción local", "Показує сирий рівень помилок, тест і джерело кожної моделі у списку локальної транскрипції"]),
-    ("Error rate", ["Współczynnik błędów", "错误率", "エラー率", "Fehlerrate", "Tasa de error", "Рівень помилок"]),
     ("{rate} · lower is better", ["{rate} · im niżej, tym lepiej", "{rate} · 越低越好", "{rate} · 低いほど良い", "{rate} · niedriger ist besser", "{rate} · cuanto menor, mejor", "{rate} · що менше, то краще"]),
     ("Dataset unknown", ["Zbiór danych nieznany", "数据集未知", "データセット不明", "Datensatz unbekannt", "Conjunto de datos desconocido", "Набір даних невідомий"]),
     ("Source: {source} at {revision}", ["Źródło: {source}, wersja {revision}", "来源：{source}，版本 {revision}", "出典: {source}（リビジョン {revision}）", "Quelle: {source}, Revision {revision}", "Fuente: {source}, revisión {revision}", "Джерело: {source}, ревізія {revision}"]),
@@ -484,7 +571,6 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Interface language", ["Język interfejsu", "界面语言", "表示言語", "Sprache der Oberfläche", "Idioma de la interfaz", "Мова інтерфейсу"]),
     ("Language of the Hex interface", ["Język interfejsu Hex", "Hex 界面语言", "Hex の表示言語", "Sprache der Hex-Oberfläche", "Idioma de la interfaz de Hex", "Мова інтерфейсу Hex"]),
     ("System", ["Systemowy", "跟随系统", "システム", "System", "Sistema", "Системна"]),
-    ("Uses vocabulary", ["Używa słownictwa", "使用词汇表", "語彙を使用", "Nutzt Vokabular", "Usa el vocabulario", "Використовує словник"]),
     ("{} doesn't use these terms; rewriting and search still do", ["{} nie korzysta z tych terminów; przepisywanie i wyszukiwanie nadal tak", "{} 不使用这些词语；改写和搜索仍会使用", "{} はこれらの用語を使いません。書き換えと検索では引き続き使われます", "{} nutzt diese Begriffe nicht; Umschreiben und Suche schon", "{} no usa estos términos; la reescritura y la búsqueda sí", "{} не використовує ці терміни; переписування й пошук їх використовують"]),
     ("Fastest", ["Najszybszy", "最快", "最速", "Am schnellsten", "Más rápido", "Найшвидша"]),
     ("Most accurate", ["Najdokładniejszy", "最准确", "最高精度", "Am genauesten", "Más preciso", "Найточніша"]),
@@ -497,10 +583,7 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Verifying model", ["Weryfikacja modelu", "正在校验模型", "モデルを検証中", "Modell wird geprüft", "Verificando modelo", "Перевірка моделі"]),
     ("Loading model", ["Wczytywanie modelu", "正在加载模型", "モデルを読み込み中", "Modell wird geladen", "Cargando modelo", "Завантаження моделі в памʼять"]),
     ("Model could not be installed.", ["Nie udało się zainstalować modelu.", "无法安装模型。", "モデルをインストールできませんでした。", "Modell konnte nicht installiert werden.", "No se pudo instalar el modelo.", "Не вдалося встановити модель."]),
-    ("Installed", ["Zainstalowany", "已安装", "インストール済み", "Installiert", "Instalado", "Встановлено"]),
     ("Recommended", ["Zalecany", "推荐", "おすすめ", "Empfohlen", "Recomendado", "Рекомендована"]),
-    ("Streams", ["Strumieniowy", "流式", "ストリーミング", "Streamt", "En streaming", "Потокова"]),
-    ("Transcribes while you speak on a GPU", ["Transkrybuje w trakcie mówienia na GPU", "使用 GPU 时边说边转写", "GPU で話しながら文字起こし", "Transkribiert auf einer GPU, während Sie sprechen", "Transcribe mientras hablas en una GPU", "Розпізнає мовлення, поки ви говорите, використовуючи GPU"]),
     ("Settings", ["Ustawienia", "设置", "設定", "Einstellungen", "Ajustes", "Налаштування"]),
     ("General", ["Ogólne", "通用", "一般", "Allgemein", "General", "Загальні"]),
     ("Experiments", ["Eksperymenty", "实验", "実験", "Experimente", "Experimentos", "Експерименти"]),
@@ -608,13 +691,9 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Switch when an app is frontmost", ["Przełącz, gdy aplikacja jest na pierwszym planie", "当前台应用匹配时切换", "アプリが最前面のときに切り替え", "Wechseln, wenn eine App im Vordergrund ist", "Cambiar cuando una aplicación esté en primer plano", "Перемикати, коли програма на передньому плані"]),
     ("Done", ["Gotowe", "完成", "完了", "Fertig", "Listo", "Готово"]),
     ("Corrections", ["Korekty", "更正", "修正", "Korrekturen", "Correcciones", "Виправлення"]),
-    ("Local transcription", ["Lokalna transkrypcja", "本地转写", "ローカル文字起こし", "Lokale Transkription", "Transcripción local", "Локальне розпізнавання мовлення"]),
     ("Language and on-device speech model", ["Język i model mowy na urządzeniu", "语言与本地语音模型", "言語とオンデバイス音声モデル", "Sprache und lokales Sprachmodell", "Idioma y modelo de voz local", "Мова й модель розпізнавання мовлення на пристрої"]),
     ("Microphone", ["Mikrofon", "麦克风", "マイク", "Mikrofon", "Micrófono", "Мікрофон"]),
     ("Dictation shortcut", ["Skrót dyktowania", "听写快捷键", "音声入力ショートカット", "Diktat-Tastenkürzel", "Atajo de dictado", "Комбінація клавіш для диктування"]),
-    ("Double-tap to lock", ["Podwójne naciśnięcie blokuje", "双击锁定", "ダブルタップでロック", "Doppeltippen zum Sperren", "Doble pulsación para bloquear", "Двічі натисніть, щоб зафіксувати"]),
-    ("Double-tap only", ["Tylko podwójne naciśnięcie", "仅限双击", "ダブルタップのみ", "Nur Doppeltippen", "Solo doble pulsación", "Лише подвійне натискання"]),
-    ("Wait for two complete shortcut taps before recording", ["Nagrywanie zaczyna się dopiero po dwóch pełnych naciśnięciach skrótu", "需要连按两次快捷键才开始录音", "ショートカットを2回押し切ってから録音を開始", "Aufnahme erst nach zwei vollständigen Kürzel-Tipps", "La grabación espera dos pulsaciones completas del atajo", "Починати запис лише після двох повних натискань комбінації клавіш"]),
     ("Paste last dictation", ["Wklej ostatnie dyktowanie", "粘贴上次听写", "前回の音声入力を貼り付け", "Letztes Diktat einfügen", "Pegar último dictado", "Вставити останнє диктування"]),
     ("Capture", ["Nagrywanie", "采集", "キャプチャ", "Aufnahme", "Captura", "Запис"]),
     ("Processing", ["Przetwarzanie", "处理", "処理", "Verarbeitung", "Procesamiento", "Обробка"]),
@@ -813,12 +892,15 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Terminal paste", ["Wklejanie w terminalu", "终端粘贴", "端末への貼り付け", "Einfügen im Terminal", "Pegado en terminal", "Вставлення в термінал"]),
     ("The config could not be created.", ["Nie udało się utworzyć konfiguracji.", "无法创建配置。", "設定を作成できませんでした。", "Die Konfiguration konnte nicht erstellt werden.", "No se pudo crear la configuración.", "Не вдалося створити конфігурацію."]),
     ("Thinking", ["Rozumowanie", "思考", "思考", "Denken", "Razonamiento", "Міркування"]),
-    ("Toggle", ["Przełącz", "切换", "トグル", "Umschalten", "Alternar", "Перемикати"]),
+    ("Hold or double-tap", ["Przytrzymaj lub stuknij dwa razy", "按住或双击", "長押しまたはダブルタップ", "Halte oder tippe zweimal", "Mantén o pulsa dos veces", "Утримувати або натиснути двічі"]),
+    ("Tap", ["Stuknij", "单击", "タップ", "Tippe", "Pulsa", "Натиснути"]),
+    ("Double-tap", ["Stuknij dwa razy", "双击", "ダブルタップ", "Tippe zweimal", "Pulsa dos veces", "Натиснути двічі"]),
+    ("Hold to talk, or double-tap to talk hands-free", ["Przytrzymaj, aby mówić, lub stuknij dwa razy, aby mówić bez trzymania", "按住说话，或双击免按住说话", "押したまま話すか、ダブルタップして押さずに話します", "Halten zum Sprechen, oder zweimal tippen, um freihändig zu sprechen", "Mantén para hablar, o pulsa dos veces para hablar sin mantener", "Утримуйте, щоб говорити, або натисніть двічі, щоб говорити без рук"]),
+    ("Hold to talk, let go to paste", ["Przytrzymaj, aby mówić, puść, aby wkleić", "按住说话，松开粘贴", "押したまま話し、離すと貼り付けます", "Halten zum Sprechen, loslassen zum Einfügen", "Mantén para hablar, suelta para pegar", "Утримуйте, щоб говорити, відпустіть, щоб вставити"]),
+    ("Tap to talk hands-free, tap again to paste", ["Stuknij, aby mówić bez trzymania, stuknij ponownie, aby wkleić", "单击免按住说话，再按一次粘贴", "タップして押さずに話し、もう一度タップで貼り付けます", "Tippen, um freihändig zu sprechen, erneut tippen zum Einfügen", "Pulsa para hablar sin mantener, pulsa otra vez para pegar", "Натисніть, щоб говорити без рук, натисніть знову, щоб вставити"]),
+    ("Double-tap to talk hands-free, tap again to paste", ["Stuknij dwa razy, aby mówić bez trzymania, stuknij ponownie, aby wkleić", "双击免按住说话，再按一次粘贴", "ダブルタップして押さずに話し、もう一度タップで貼り付けます", "Zweimal tippen, um freihändig zu sprechen, erneut tippen zum Einfügen", "Pulsa dos veces para hablar sin mantener, pulsa otra vez para pegar", "Натисніть двічі, щоб говорити без рук, натисніть знову, щоб вставити"]),
+    ("Needs a shortcut with a key, like {}", ["Wymaga skrótu z klawiszem, np. {}", "需要带按键的快捷键，例如 {}", "キーを含むショートカットが必要です（例: {}）", "Braucht ein Kürzel mit einer Taste, etwa {}", "Necesita un atajo con una tecla, como {}", "Потрібна комбінація з клавішею, наприклад {}"]),
     ("How it works", ["Jak to działa", "工作原理", "仕組み", "So funktioniert es", "Cómo funciona", "Як це працює"]),
-    ("How the shortcut works", ["Jak działa skrót", "快捷键如何工作", "ショートカットの仕組み", "So funktioniert das Kürzel", "Cómo funciona el atajo", "Як працює сполучення клавіш"]),
-    ("Hold to talk. Let go to paste.", ["Przytrzymaj, aby mówić. Puść, aby wkleić.", "按住说话，松开粘贴。", "押したまま話し、離すと貼り付けます。", "Halten zum Sprechen. Loslassen zum Einfügen.", "Mantén para hablar. Suelta para pegar.", "Утримуйте, щоб говорити. Відпустіть, щоб вставити."]),
-    ("Press to start, press to stop.", ["Naciśnij, aby zacząć, naciśnij, aby zakończyć.", "按一下开始，再按一下停止。", "押して開始、もう一度押して停止。", "Drücken zum Starten, erneut drücken zum Stoppen.", "Pulsa para empezar, pulsa para parar.", "Натисніть, щоб почати, натисніть, щоб зупинити."]),
-    ("Tap twice to talk hands-free. Press once to stop.", ["Stuknij dwa razy, aby mówić bez trzymania. Naciśnij raz, aby zakończyć.", "连按两次即可免按住说话，按一次停止。", "2回タップすると押さずに話せます。1回押すと停止します。", "Zweimal tippen, um freihändig zu sprechen. Einmal drücken zum Stoppen.", "Toca dos veces para hablar sin mantener. Pulsa una vez para parar.", "Натисніть двічі, щоб говорити без рук. Натисніть раз, щоб зупинити."]),
     ("Transformations", ["Transformacje", "转换", "変換", "Transformationen", "Transformaciones", "Перетворення"]),
     ("Turn Hex on in every app whenever it opens", ["Włączaj Hex we wszystkich aplikacjach przy każdym uruchomieniu", "每次打开时在所有应用中启用 Hex", "起動するたびに、すべてのアプリで Hex をオンにする", "Hex bei jedem Start in allen Apps einschalten", "Activar Hex en todas las apps cada vez que se abra", "Вмикати Hex в усіх програмах під час кожного запуску"]),
     ("Up to date", ["Aktualne", "已是最新", "最新です", "Aktuell", "Actualizado", "Актуальна версія"]),
@@ -938,9 +1020,6 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("{} min", ["{} min", "{} 分钟", "{} 分", "{} Min.", "{} min", "{} хв"]),
     ("{hours} h {minutes} min", ["{hours} godz. {minutes} min", "{hours} 小时 {minutes} 分钟", "{hours} 時間 {minutes} 分", "{hours} Std. {minutes} Min.", "{hours} h {minutes} min", "{hours} год {minutes} хв"]),
     ("{} pause", ["{} pauzy", "暂停 {}", "{} の休止", "{} Pause", "{} de pausa", "пауза {}"]),
-    ("Accuracy", ["Dokładność", "准确率", "精度", "Genauigkeit", "Precisión", "Точність"]),
-    ("Size", ["Rozmiar", "大小", "サイズ", "Größe", "Tamaño", "Розмір"]),
-    ("Speed", ["Szybkość", "速度", "速度", "Geschwindigkeit", "Velocidad", "Швидкість"]),
     ("Model could not be deleted.", ["Nie udało się usunąć modelu.", "无法删除模型。", "モデルを削除できませんでした。", "Das Modell konnte nicht gelöscht werden.", "No se pudo eliminar el modelo.", "Не вдалося видалити модель."]),
     ("Delete {}?", ["Usunąć {}?", "删除 {}？", "{} を削除しますか？", "{} löschen?", "¿Eliminar {}?", "Видалити {}?"]),
     ("100 languages", ["100 języków", "100 种语言", "100 言語", "100 Sprachen", "100 idiomas", "100 мов"]),
@@ -1013,6 +1092,11 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Back", ["Wstecz", "返回", "戻る", "Zurück", "Atrás", "Назад"]),
     ("Continue", ["Dalej", "继续", "続ける", "Weiter", "Continuar", "Продовжити"]),
     ("Almost ready", ["Prawie gotowe", "即将就绪", "もうすぐ準備完了", "Fast bereit", "Casi listo", "Майже готово"]),
+    ("Let Hex paste for you", ["Pozwól Hex wklejać za ciebie", "让 Hex 替你粘贴", "Hex に貼り付けを任せる", "Lass Hex für dich einfügen", "Deja que Hex pegue por ti", "Дозвольте Hex вставляти за вас"]),
+    ("Hex needs this to type your words into your apps. Your desktop asks once, and may call it remote desktop.", ["Hex potrzebuje tego, by wpisywać twoje słowa w aplikacjach. Pulpit zapyta raz i może nazwać to zdalnym pulpitem.", "Hex 需要此权限才能把你的话输入到应用中。桌面只会询问一次，可能会称之为“远程桌面”。", "Hex がアプリに言葉を入力するために必要です。デスクトップが一度だけ確認し、「リモートデスクトップ」と表示することがあります。", "Hex braucht das, um deine Worte in deine Apps zu schreiben. Dein Desktop fragt einmal und nennt es vielleicht Fernsteuerung.", "Hex lo necesita para escribir tus palabras en tus apps. Tu escritorio lo pregunta una vez y puede llamarlo escritorio remoto.", "Hex потрібен цей дозвіл, щоб вводити ваші слова в застосунки. Стільниця запитає один раз і може назвати це віддаленою стільницею."]),
+    ("Paste into apps", ["Wklejanie w aplikacjach", "粘贴到应用", "アプリへの貼り付け", "In Apps einfügen", "Pegar en apps", "Вставлення в застосунки"]),
+    ("Hex only sends the paste keystroke. It never sees your screen.", ["Hex wysyła tylko skrót wklejania. Nigdy nie widzi twojego ekranu.", "Hex 只发送粘贴按键，从不查看你的屏幕。", "Hex は貼り付けのキー操作を送るだけで、画面を見ることはありません。", "Hex sendet nur den Einfüge-Tastendruck. Deinen Bildschirm sieht es nie.", "Hex solo envía la tecla de pegar. Nunca ve tu pantalla.", "Hex лише надсилає комбінацію вставлення. Він ніколи не бачить ваш екран."]),
+    ("Without it, Hex copies your words and you press Ctrl+V.", ["Bez tego Hex kopiuje twoje słowa, a ty naciskasz Ctrl+V.", "没有此权限时，Hex 会复制你的话，由你按 Ctrl+V。", "許可しない場合、Hex が言葉をコピーし、あなたが Ctrl+V を押します。", "Ohne das kopiert Hex deine Worte und du drückst Strg+V.", "Sin esto, Hex copia tus palabras y tú pulsas Ctrl+V.", "Без цього Hex копіює ваші слова, а ви натискаєте Ctrl+V."]),
     ("Hears you only while you hold the shortcut", ["Słyszy cię tylko, gdy trzymasz skrót", "仅在按住快捷键时收听", "ショートカットを押している間だけ聞き取ります", "Hört nur zu, während du das Kürzel hältst", "Solo te escucha mientras mantienes el atajo", "Слухає вас, лише поки ви утримуєте комбінацію клавіш"]),
     ("Let Hex hear you and type for you", ["Pozwól Hex słyszeć cię i pisać za ciebie", "让 Hex 听见你并替你输入", "Hex が聞き取り、入力できるようにする", "Lass Hex zuhören und für dich tippen", "Deja que Hex te escuche y escriba por ti", "Дозвольте Hex слухати вас і друкувати за вас"]),
     ("Notices the shortcut and pastes your words in any app", ["Rozpoznaje skrót i wkleja słowa w każdej aplikacji", "在所有应用中识别快捷键并粘贴文字", "どのアプリでもショートカットを認識し、言葉を貼り付けます", "Erkennt das Kürzel und fügt deine Worte in jeder App ein", "Detecta el atajo y pega tus palabras en cualquier app", "Помічає сполучення клавіш і вставляє ваші слова в будь-якій програмі"]),
@@ -1024,7 +1108,54 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Speech model", ["Model mowy", "语音模型", "音声モデル", "Sprachmodell", "Modelo de voz", "Модель"]),
     ("Language", ["Język", "语言", "言語", "Sprache", "Idioma", "Мова"]),
     ("{model} doesn't support {previous}, so the language changed to {language}", ["{model} nie obsługuje języka: {previous}, więc język zmieniono na: {language}", "{model} 不支持{previous}，因此语言已改为{language}", "{model} は{previous}に対応していないため、言語を{language}に変更しました", "{model} unterstützt {previous} nicht, daher wurde die Sprache auf {language} geändert", "{model} no admite {previous}, así que el idioma cambió a {language}", "{model} не підтримує {previous}, тому мову змінено на {language}"]),
-    ("Doesn't support {language}; switches the language to {fallback}", ["Nie obsługuje języka: {language}; przełącza język na: {fallback}", "不支持{language}；会将语言切换为{fallback}", "{language}に非対応。言語を{fallback}に切り替えます", "Unterstützt {language} nicht; stellt die Sprache auf {fallback} um", "No admite {language}; cambia el idioma a {fallback}", "Не підтримує {language}; мову буде змінено на {fallback}"]),
+    ("All speech models", ["Wszystkie modele mowy", "所有语音模型", "すべての音声モデル", "Alle Sprachmodelle", "Todos los modelos de voz", "Усі мовні моделі"]),
+    ("Speech model for {language}", ["Model mowy dla języka: {language}", "{language}语音模型", "{language}の音声モデル", "Sprachmodell für {language}", "Modelo de voz para {language}", "Мовна модель для {language}"]),
+    ("Speech model that detects the language", ["Model mowy, który rozpoznaje język", "自动识别语言的语音模型", "言語を自動判別する音声モデル", "Sprachmodell, das die Sprache erkennt", "Modelo de voz que detecta el idioma", "Мовна модель, що сама визначає мову"]),
+    ("Wait when you stop", ["Czekanie po zakończeniu", "停止后的等待", "話し終えてからの待ち時間", "Wartezeit nach dem Sprechen", "Espera al terminar", "Очікування після зупинки"]),
+    ("Wrong words", ["Błędne słowa", "错词", "誤った単語", "Falsche Wörter", "Palabras erróneas", "Хибні слова"]),
+    ("Wrong characters", ["Błędne znaki", "错字", "誤った文字", "Falsche Zeichen", "Caracteres erróneos", "Хибні символи"]),
+    ("Languages", ["Języki", "语言", "言語", "Sprachen", "Idiomas", "Мови"]),
+    ("Reads your vocabulary", ["Czyta twoje słownictwo", "读取你的词汇表", "語彙を読み取る", "Liest dein Vokabular", "Lee tu vocabulario", "Читає ваш словник"]),
+    ("Not measured", ["Nie zmierzono", "未测量", "未計測", "Nicht gemessen", "Sin medir", "Не виміряно"]),
+    ("Yes", ["Tak", "是", "はい", "Ja", "Sí", "Так"]),
+    ("No wait", ["Bez czekania", "无需等待", "待ち時間なし", "Keine Wartezeit", "Sin espera", "Без очікування"]),
+    ("Under 1 s", ["Poniżej 1 s", "不到 1 秒", "1 秒未満", "Unter 1 s", "Menos de 1 s", "Менше 1 с"]),
+    ("{} s", ["{} s", "{} 秒", "{} 秒", "{} s", "{} s", "{} с"]),
+    ("1 in {}", ["1 na {}", "{} 个中 1 个", "{} 個に 1 個", "1 von {}", "1 de cada {}", "1 з {}"]),
+    ("Under 1 s wait", ["Poniżej 1 s czekania", "等待不到 1 秒", "待ち時間 1 秒未満", "Unter 1 s Wartezeit", "Menos de 1 s de espera", "Очікування менше 1 с"]),
+    ("{} s wait", ["{} s czekania", "等待 {} 秒", "待ち時間 {} 秒", "{} s Wartezeit", "{} s de espera", "Очікування {} с"]),
+    ("1 in {} words wrong", ["1 na {} słów błędnie", "每 {} 个词错 1 个", "{} 語に 1 語の誤り", "1 von {} Wörtern falsch", "1 de cada {} palabras mal", "1 з {} слів хибне"]),
+    ("1 in {} characters wrong", ["1 na {} znaków błędnie", "每 {} 个字错 1 个", "{} 文字に 1 文字の誤り", "1 von {} Zeichen falsch", "1 de cada {} caracteres mal", "1 з {} символів хибний"]),
+    ("Managed by macOS", ["Zarządzany przez macOS", "由 macOS 管理", "macOS が管理", "Von macOS verwaltet", "Gestionado por macOS", "Керує macOS"]),
+    ("Downloaded", ["Pobrano", "已下载", "ダウンロード済み", "Heruntergeladen", "Descargado", "Завантажено"]),
+    ("Download {}", ["Pobierz {}", "下载 {}", "{} をダウンロード", "{} herunterladen", "Descargar {}", "Завантажити {}"]),
+    ("of {}", ["z {}", "共 {}", "/ {}", "von {}", "de {}", "з {}"]),
+    ("In use", ["W użyciu", "使用中", "使用中", "In Verwendung", "En uso", "Використовується"]),
+    ("Fewest wrong words", ["Najmniej błędnych słów", "错词最少", "誤りが最も少ない", "Wenigste falsche Wörter", "Menos palabras erróneas", "Найменше хибних слів"]),
+    ("Most languages", ["Najwięcej języków", "语言最多", "対応言語が最多", "Meiste Sprachen", "Más idiomas", "Найбільше мов"]),
+    ("1 more model", ["Jeszcze 1 model", "还有 1 个模型", "ほかに 1 個のモデル", "1 weiteres Modell", "1 modelo más", "Ще 1 модель"]),
+    ("{} more models", ["Więcej modeli: {}", "还有 {} 个模型", "ほかに {} 個のモデル", "{} weitere Modelle", "{} modelos más", "Ще моделей: {}"]),
+    ("Detect the language", ["Rozpoznawanie języka", "自动识别语言", "言語を自動判別", "Sprache erkennen", "Detectar el idioma", "Визначення мови"]),
+    ("Your model files", ["Twoje pliki modeli", "你的模型文件", "あなたのモデルファイル", "Deine Modelldateien", "Tus archivos de modelo", "Ваші файли моделей"]),
+    ("{} more that can't detect the language", ["Nie rozpoznają języka: {}", "另有 {} 个无法识别语言", "言語を判別できないモデル {} 個", "{} weitere, die die Sprache nicht erkennen", "{} más que no detectan el idioma", "Не визначають мову: {}"]),
+    ("{count} more that don't speak {language}", ["Nie obsługują języka {language}: {count}", "另有 {count} 个不支持{language}", "{language}非対応のモデル {count} 個", "{count} weitere ohne {language}", "{count} más que no hablan {language}", "Без підтримки {language}: {count}"]),
+    ("Choosing it switches the language to {language}", ["Wybranie go przełączy język na: {language}", "选择后语言将切换为{language}", "選ぶと言語が{language}に切り替わります", "Bei Auswahl wechselt die Sprache zu {language}", "Al elegirlo, el idioma cambia a {language}", "Вибір змінить мову на {language}"]),
+    ("It hears the language from the audio, not from your setting", ["Rozpoznaje język z dźwięku, a nie z ustawień", "它从音频中识别语言，而不是依据你的设置", "設定ではなく音声から言語を聞き分けます", "Es erkennt die Sprache am Ton, nicht an deiner Einstellung", "Detecta el idioma por el audio, no por tu ajuste", "Вона визначає мову за звуком, а не за налаштуванням"]),
+    ("Writes while you talk, so the text is ready when you let go", ["Pisze, gdy mówisz, więc tekst jest gotowy, gdy puścisz", "边说边写，松开时文字已就绪", "話しながら書き起こすので、離した時には完成しています", "Schreibt mit, während du sprichst, also ist der Text beim Loslassen fertig", "Escribe mientras hablas, así el texto está listo al soltar", "Пише, поки ви говорите, тож текст готовий, щойно відпустите"]),
+    ("The fewest wrong words, in 14 languages. A big download", ["Najmniej błędnych słów, w 14 językach. Duży plik", "错词最少，支持 14 种语言。下载较大", "誤りが最も少なく、14 言語に対応。ダウンロードは大きめ", "Die wenigsten falschen Wörter, in 14 Sprachen. Ein großer Download", "Las menos palabras erróneas, en 14 idiomas. Una descarga grande", "Найменше хибних слів, 14 мов. Велике завантаження"]),
+    ("Almost any language, and it reads your vocabulary", ["Prawie każdy język i czyta twoje słownictwo", "几乎支持所有语言，并读取你的词汇表", "ほぼすべての言語に対応し、語彙も読み取ります", "Fast jede Sprache, und es liest dein Vokabular", "Casi cualquier idioma, y lee tu vocabulario", "Майже будь-яка мова, і читає ваш словник"]),
+    ("The English model before Parakeet Unified", ["Angielski model sprzed Parakeet Unified", "Parakeet Unified 之前的英语模型", "Parakeet Unified 以前の英語モデル", "Das englische Modell vor Parakeet Unified", "El modelo de inglés anterior a Parakeet Unified", "Англійська модель до Parakeet Unified"]),
+    ("25 European languages, and it hears which one you speak", ["25 języków europejskich i sam rozpoznaje, którym mówisz", "25 种欧洲语言，并能听出你说的是哪种", "ヨーロッパの 25 言語に対応し、話している言語を聞き分けます", "25 europäische Sprachen, und es hört, welche du sprichst", "25 idiomas europeos, y reconoce cuál hablas", "25 європейських мов, і сама чує, якою ви говорите"]),
+    ("Parakeet v3, retrained for fewer wrong words", ["Parakeet v3, douczony, by mylić mniej słów", "Parakeet v3 的再训练版，错词更少", "誤りを減らすよう再学習した Parakeet v3", "Parakeet v3, nachtrainiert für weniger falsche Wörter", "Parakeet v3, reentrenado para menos palabras erróneas", "Parakeet v3, донавчена для меншої кількості хибних слів"]),
+    ("Chinese and 29 more, and it reads your vocabulary", ["Chiński i 29 innych, i czyta twoje słownictwo", "中文及另外 29 种语言，并读取你的词汇表", "中国語ほか 29 言語に対応し、語彙も読み取ります", "Chinesisch und 29 weitere, und es liest dein Vokabular", "Chino y 29 más, y lee tu vocabulario", "Китайська та ще 29, і читає ваш словник"]),
+    ("Egyptian Arabic, mixed with English", ["Egipski arabski, przeplatany angielskim", "埃及阿拉伯语，夹杂英语", "英語交じりのエジプト・アラビア語", "Ägyptisches Arabisch, gemischt mit Englisch", "Árabe egipcio, mezclado con inglés", "Єгипетська арабська впереміш з англійською"]),
+    ("Whisper, tuned for Hebrew", ["Whisper dostrojony do hebrajskiego", "针对希伯来语调优的 Whisper", "ヘブライ語向けに調整した Whisper", "Whisper, abgestimmt auf Hebräisch", "Whisper, ajustado para hebreo", "Whisper, налаштована для івриту"]),
+    ("Chinese, Japanese, Korean and English. A small download", ["Chiński, japoński, koreański i angielski. Mały plik", "中文、日语、韩语和英语。下载较小", "中国語、日本語、韓国語、英語。ダウンロードは小さめ", "Chinesisch, Japanisch, Koreanisch und Englisch. Ein kleiner Download", "Chino, japonés, coreano e inglés. Una descarga pequeña", "Китайська, японська, корейська й англійська. Мале завантаження"]),
+    ("Parakeet, tuned for fewer wrong words in English", ["Parakeet dostrojony, by mylić mniej angielskich słów", "针对英语调优的 Parakeet，错词更少", "英語の誤りを減らすよう調整した Parakeet", "Parakeet, abgestimmt auf weniger falsche Wörter im Englischen", "Parakeet, ajustado para menos palabras erróneas en inglés", "Parakeet, налаштована на менше хибних слів англійською"]),
+    ("English, with the ums and uhs taken out", ["Angielski, bez „yyy” i „eee”", "英语，去掉嗯、呃等口头语", "英語。「えー」「あー」などを取り除きます", "Englisch, ohne Ähs und Ähms", "Inglés, sin los eh y los mm", "Англійська, без «е-е» та «м-м»"]),
+    ("Writes while you talk, in 27 languages", ["Pisze, gdy mówisz, w 27 językach", "边说边写，支持 27 种语言", "話しながら書き起こし、27 言語に対応", "Schreibt mit, während du sprichst, in 27 Sprachen", "Escribe mientras hablas, en 27 idiomas", "Пише, поки ви говорите, 27 мов"]),
+    ("Russian, with punctuation. A small download", ["Rosyjski, z interpunkcją. Mały plik", "俄语，带标点。下载较小", "ロシア語、句読点付き。ダウンロードは小さめ", "Russisch, mit Satzzeichen. Ein kleiner Download", "Ruso, con puntuación. Una descarga pequeña", "Російська, з розділовими знаками. Мале завантаження"]),
+    ("Apple's speech recognition, kept up to date by macOS", ["Rozpoznawanie mowy Apple, aktualizowane przez macOS", "Apple 的语音识别，由 macOS 保持更新", "Apple の音声認識。macOS が最新に保ちます", "Apples Spracherkennung, von macOS aktuell gehalten", "El reconocimiento de voz de Apple, actualizado por macOS", "Розпізнавання мовлення Apple, яке оновлює macOS"]),
     ("Start using Hex", ["Zacznij używać Hex", "开始使用 Hex", "Hex を使い始める", "Hex verwenden", "Empezar a usar Hex", "Почати користуватися Hex"]),
     ("Transcribing…", ["Transkrybowanie…", "正在转写…", "文字起こし中…", "Transkribiert …", "Transcribiendo…", "Розпізнавання мовлення…"]),
     // Fun / Hex Microphone (experimental)
@@ -1199,6 +1330,55 @@ mod tests {
     }
 
     #[test]
+    fn traditional_chinese_locales_choose_traditional_and_others_simplified() {
+        use super::{
+            LANGUAGE_CHOICES, TRADITIONAL_CHINESE_COLUMN, column_for_code, column_for_language_tag,
+            locale_from_env,
+        };
+        for tag in [
+            "zh-Hant-TW",
+            "zh-Hant",
+            "zh-TW",
+            "zh_HK.UTF-8",
+            "zh-MO",
+            "zh-Hant-CN",
+        ] {
+            assert_eq!(
+                column_for_language_tag(tag),
+                TRADITIONAL_CHINESE_COLUMN,
+                "{tag}"
+            );
+        }
+        for tag in [
+            "zh-Hans-CN",
+            "zh-CN",
+            "zh-SG",
+            "zh-Hans-HK",
+            "zh_CN.UTF-8",
+            "zh",
+        ] {
+            assert_eq!(column_for_language_tag(tag), column_for_code("zh"), "{tag}");
+        }
+        assert_eq!(column_for_code("zh-Hant"), TRADITIONAL_CHINESE_COLUMN);
+        assert!(LANGUAGE_CHOICES.contains(&(Some("zh"), "简体中文")));
+        assert!(LANGUAGE_CHOICES.contains(&(Some("zh-Hant"), "繁體中文")));
+        let locale = locale_from_env(None, Some("zh_TW.UTF-8"), Some("en_US.UTF-8"));
+        assert_eq!(locale, "zh_TW.UTF-8");
+        assert_eq!(column_for_language_tag(&locale), TRADITIONAL_CHINESE_COLUMN);
+        assert_eq!(locale_from_env(Some("C"), None, None), "");
+    }
+
+    #[test]
+    fn traditional_chinese_translates_with_its_column() {
+        super::set_current(super::TRADITIONAL_CHINESE_COLUMN);
+        assert_eq!(super::tr("Don't switch"), "不切換");
+        assert_eq!(super::tr("Not installed"), "未安裝");
+        assert_eq!(super::tr_fill("Remove {}?", "x"), "移除 x？");
+        super::set_current(super::ENGLISH);
+        assert_eq!(super::tr("Don't switch"), "Don't switch");
+    }
+
+    #[test]
     fn french_translates_with_its_column() {
         super::set_current(super::FRENCH_COLUMN);
         assert_eq!(super::tr("Don't switch"), "Ne pas changer");
@@ -1286,10 +1466,14 @@ mod tests {
         include_str!("../rune_ui/onboarding_kit/versus.rs"),
         include_str!("../rune_ui/output.rs"),
         include_str!("../rune_ui/picker.rs"),
+        include_str!("../rune_ui/picker/compare.rs"),
+        include_str!("../rune_ui/picker/facts.rs"),
+        include_str!("../rune_ui/picker/list.rs"),
         include_str!("../rune_ui/platform_settings.rs"),
         #[cfg(hex_capture)]
         include_str!("../rune_ui/scrawl.rs"),
         include_str!("../rune_ui/settings.rs"),
+        include_str!("../rune_ui/shortcut_mode.rs"),
         include_str!("../rune_ui/sound_sets.rs"),
         include_str!("../rune_ui/vocabulary.rs"),
         include_str!("../rune_ui/windows_host.rs"),

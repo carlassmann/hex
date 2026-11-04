@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use super::{HttpContext, generate_token, write_stream_headers};
+use super::super::{HttpContext, generate_token, write_stream_headers};
 use crate::transcription::service::{AudioClip, TranscriptionServiceError};
 use crate::transcription::stream::{CreateError, End, PushError, SampleFormat, Segment, Stream};
 
@@ -105,7 +105,7 @@ pub(super) fn finish_stream(
     let audio_ms = stream.received_ms();
     let backlog_ms = stream.backlog_ms();
     let transcribing = Instant::now();
-    let early = super::remote_rewrite::take(stream.id);
+    let early = super::rewrite::take(stream.id);
     let (raw, segments) = match wait_for_stream(&mut progress, stream, context) {
         Ok(transcript) => transcript,
         Err(failure) => {
@@ -302,7 +302,7 @@ fn wait_for_service(
     let settings = crate::app_settings::AppSettings::load()
         .map_err(|_| Failure::new("settings-unavailable", "Hex could not read its settings"))?;
     let selection = settings.transcription;
-    if !super::model_ready(&selection) {
+    if !super::super::model_ready(&selection) {
         return Err(Failure::new(
             "model-not-ready",
             "the speech model isn't ready",
@@ -364,7 +364,7 @@ fn rewrite(progress: &mut Progress, raw: &str, application: String) -> Option<(S
     std::thread::Builder::new()
         .name("remote-rewrite".into())
         .spawn(move || {
-            let _ = sender.send(super::remote::process(&raw_owned, application, None));
+            let _ = sender.send(super::process(&raw_owned, application, None));
         })
         .ok()?;
     let text = loop {
@@ -387,7 +387,7 @@ fn rewrite(progress: &mut Progress, raw: &str, application: String) -> Option<(S
 /// rewritten while recording, and how many were kept as heard.
 fn rewrite_rest(
     progress: &mut Progress,
-    early: Arc<super::remote_rewrite::EarlyRewrite>,
+    early: Arc<super::rewrite::EarlyRewrite>,
     raw: &str,
     segments: Vec<Segment>,
     application: String,
@@ -410,7 +410,7 @@ fn rewrite_rest(
         .name("remote-rewrite".into())
         .spawn(move || {
             let finished = early.finish(&segments, wait, |rest| {
-                super::remote::process(&rest, application, None)
+                super::process(&rest, application, None)
             });
             let _ = sender.send(finished);
         })
@@ -424,7 +424,7 @@ fn rewrite_rest(
                 }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                break super::remote_rewrite::Finished {
+                break super::rewrite::Finished {
                     text: raw.to_owned(),
                     pieces: 0,
                     kept_as_heard: 0,

@@ -10,7 +10,7 @@
 //!   with this machine's selected model and processed by its Modes, as if it
 //!   were dictated here into an app named after the device (`X-Hex-Application`,
 //!   default the device's label), so a mode can target it. With `?progress=1`
-//!   it answers NDJSON progress instead (`remote_progress`).
+//!   it answers NDJSON progress instead (`remote::progress`).
 //! - `POST /remote/streams` and `/remote/streams/{id}/{audio,heartbeat,cancel}`:
 //!   the `/streams` routes (`docs/streams.md`) for a device that sends audio
 //!   while it records, so a long dictation is mostly transcribed by its end.
@@ -32,6 +32,9 @@ use super::{
     HttpContext, HttpRequest, HttpResponse, RequestAction, UPLOAD_DEADLINE, read_audio,
     read_body_bounded, streams, wait_for_transcript, write_response,
 };
+
+mod progress;
+mod rewrite;
 
 const MAX_PAIR_BYTES: usize = 1024;
 const MAX_VOCABULARY_EDIT_BYTES: usize = 4096;
@@ -105,10 +108,10 @@ pub(super) fn handle_request(request: HttpRequest, context: &HttpContext) -> Req
     }
     match (request.method.as_str(), path.as_str()) {
         ("GET", "/.well-known/hex/machine") => RequestAction::Respond(machine()),
-        ("POST", "/pair") => RequestAction::RemotePair {
+        ("POST", "/pair") => RequestAction::Remote(Action::Pair {
             content_length: request.content_length.unwrap_or(0),
             body_prefix: request.body_prefix,
-        },
+        }),
         ("POST", "/remote/dictations") => dictation_action(request, query == "progress=1"),
         ("GET", "/remote/vocabulary") => match paired_device(&request) {
             Some(_) => RequestAction::Respond(vocabulary(None)),
@@ -169,7 +172,7 @@ fn stream_action(request: HttpRequest, path: &str, context: &HttpContext) -> Req
                     .filter(|stream| stream.owned_by(token))
             })
         {
-            super::remote_rewrite::watch(stream, application);
+            rewrite::watch(stream, application);
         }
         let action = action.to_owned();
         return streams::route(request, id, &action, context);
@@ -181,10 +184,10 @@ fn stream_action(request: HttpRequest, path: &str, context: &HttpContext) -> Req
             .filter(|stream| stream.owned_by(token))
     });
     match stream {
-        Some(stream) => RequestAction::RemoteStreamFinish {
+        Some(stream) => RequestAction::Remote(Action::StreamFinish {
             stream,
             application,
-        },
+        }),
         None => RequestAction::Respond(HttpResponse::code(404, "stream-not-found")),
     }
 }
@@ -203,20 +206,69 @@ fn dictation_action(request: HttpRequest, progress: bool) -> RequestAction {
         .remote_application
         .clone()
         .unwrap_or_else(|| device.label.clone());
-    RequestAction::RemoteDictation {
+    RequestAction::Remote(Action::Dictation {
         application,
         content_length,
         body_prefix: request.body_prefix,
         progress,
+    })
+}
+
+/// What a paired device's request leaves to do once routed.
+pub(super) enum Action {
+    Pair {
+        content_length: usize,
+        body_prefix: Vec<u8>,
+    },
+    Dictation {
+        application: String,
+        content_length: usize,
+        body_prefix: Vec<u8>,
+        progress: bool,
+    },
+    StreamFinish {
+        stream: std::sync::Arc<crate::transcription::stream::Stream>,
+        application: String,
+    },
+    Vocabulary {
+        remove: bool,
+        content_length: usize,
+        body_prefix: Vec<u8>,
+    },
+}
+
+pub(super) fn handle(connection: &mut TcpStream, action: Action, context: &HttpContext) {
+    match action {
+        Action::Pair {
+            content_length,
+            body_prefix,
+        } => pair(connection, content_length, body_prefix, context),
+        Action::Dictation {
+            application,
+            content_length,
+            body_prefix,
+            progress,
+        } => dictate(
+            connection,
+            application,
+            content_length,
+            body_prefix,
+            progress,
+            context,
+        ),
+        Action::StreamFinish {
+            stream,
+            application,
+        } => progress::finish_stream(connection, &stream, application, context),
+        Action::Vocabulary {
+            remove,
+            content_length,
+            body_prefix,
+        } => edit_vocabulary(connection, remove, content_length, body_prefix, context),
     }
 }
 
-pub(super) fn pair(
-    stream: &mut TcpStream,
-    content_length: usize,
-    mut body: Vec<u8>,
-    context: &HttpContext,
-) {
+fn pair(stream: &mut TcpStream, content_length: usize, mut body: Vec<u8>, context: &HttpContext) {
     let response = match read_body_bounded(
         stream,
         content_length,
@@ -258,7 +310,7 @@ fn redeem(request: &PairRequest) -> HttpResponse {
     }
 }
 
-pub(super) fn dictate(
+fn dictate(
     stream: &mut TcpStream,
     application: String,
     content_length: usize,
@@ -277,7 +329,7 @@ pub(super) fn dictate(
         ) {
             Ok(clip) => {
                 let upload_ms = uploading.elapsed().as_millis() as u64;
-                super::remote_progress::dictate(stream, clip, upload_ms, application, context);
+                progress::dictate(stream, clip, upload_ms, application, context);
             }
             Err(Some(response)) => {
                 let _ = write_response(stream, response);
@@ -393,11 +445,11 @@ fn vocabulary_action(request: HttpRequest, remove: bool) -> RequestAction {
     if paired_device(&request).is_none() {
         return RequestAction::Respond(HttpResponse::code(401, "not-paired"));
     }
-    RequestAction::RemoteVocabulary {
+    RequestAction::Remote(Action::Vocabulary {
         remove,
         content_length: request.content_length.unwrap_or(0),
         body_prefix: request.body_prefix,
-    }
+    })
 }
 
 fn vocabulary(changed: Option<bool>) -> HttpResponse {
@@ -411,7 +463,7 @@ fn vocabulary(changed: Option<bool>) -> HttpResponse {
     HttpResponse::json(200, &VocabularyResponse { terms, changed })
 }
 
-pub(super) fn edit_vocabulary(
+fn edit_vocabulary(
     stream: &mut TcpStream,
     remove: bool,
     content_length: usize,

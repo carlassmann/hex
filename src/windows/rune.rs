@@ -89,6 +89,8 @@ pub(crate) enum ShortcutTarget {
     Capture,
     /// Dictate without processing.
     RawDictation,
+    /// Toggle mode's cancel shortcut.
+    Cancel,
 }
 
 /// What the runtime last published for the window.
@@ -160,6 +162,7 @@ pub fn open(event_path: PathBuf, shutdown: &'static AtomicBool, start_hidden: bo
     let Some(instance) = crate::windows::app::AppInstance::claim(start_hidden)? else {
         return Ok(());
     };
+    name_ui_thread();
     crate::labs::log_launch();
     shutdown.store(false, Ordering::Relaxed);
     let (settings, settings_error) = AppSettings::load_for_launch();
@@ -184,7 +187,29 @@ pub fn open(event_path: PathBuf, shutdown: &'static AtomicBool, start_hidden: bo
             });
         });
     let window = app.handle();
-    let tray = match create_tray(window.clone()) {
+    // Adding the tray icon waits for Explorer, so it runs on its own thread
+    // while the overlays install.
+    let adding_tray = {
+        let window = window.clone();
+        std::thread::Builder::new()
+            .name("hex-tray-setup".into())
+            .spawn(move || create_tray(window))
+    };
+    let hud = crate::rune_hud::install(&mut app);
+    crate::rune_ui::live_text::install(&mut app, crate::rune_hud::live_text_place);
+    // The capture capsule, picker, and ink.
+    let _capture_overlays =
+        crate::rune_ui::capture_capsule::feed::CaptureOverlays::install(&mut app);
+    let meetings = crate::meeting::runtime::Meetings::install(&mut app, shutdown)
+        .inspect_err(|error| tracing::error!(%error, "meetings could not start"))
+        .ok();
+    let added_tray = match adding_tray {
+        Ok(thread) => thread
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+        Err(_) => create_tray(window.clone()),
+    };
+    let tray = match added_tray {
         Ok(tray) => {
             app = if start_hidden {
                 app.windowless()
@@ -200,14 +225,6 @@ pub fn open(event_path: PathBuf, shutdown: &'static AtomicBool, start_hidden: bo
             None
         }
     };
-    let hud = crate::rune_hud::install(&mut app);
-    crate::rune_ui::live_text::install(&mut app, crate::rune_hud::live_text_place);
-    // The capture capsule, picker, and ink.
-    let _capture_overlays =
-        crate::rune_ui::capture_capsule::feed::CaptureOverlays::install(&mut app);
-    let meetings = crate::meeting::runtime::Meetings::install(&mut app, shutdown)
-        .inspect_err(|error| tracing::error!(%error, "meetings could not start"))
-        .ok();
     let (requests, receiver) = mpsc::channel();
     let shared = Arc::new(Shared::default());
     RUNTIME
@@ -218,7 +235,7 @@ pub fn open(event_path: PathBuf, shutdown: &'static AtomicBool, start_hidden: bo
         })
         .map_err(|_| eyre!("the Hex runtime already started"))?;
     let (control_calls, control_receiver) = mpsc::sync_channel(8);
-    let local_api = crate::local_api::LocalApi::start_for_app(&event_path, control_calls);
+    let local_api = crate::local_api::LocalApi::start_for_app(&event_path, control_calls, None);
     let quit = window.clone();
     let runtime_tray = tray.clone();
     let runtime_shared = shared.clone();
@@ -264,6 +281,17 @@ pub fn open(event_path: PathBuf, shutdown: &'static AtomicBool, start_hidden: bo
     drop(local_api);
     drop(tray);
     Ok(())
+}
+
+/// Names the main thread, which runs Rune's event loop and draws, so
+/// profilers and debuggers tell it from Hex's other threads (which the
+/// standard library names when they start).
+fn name_ui_thread() {
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadDescription};
+    let name: Vec<u16> = "hex-ui".encode_utf16().chain([0]).collect();
+    // SAFETY: `name` is a NUL-terminated UTF-16 string that outlives the
+    // call, and the pseudo handle names the calling thread.
+    unsafe { SetThreadDescription(GetCurrentThread(), name.as_ptr()) };
 }
 
 // ---------------------------------------------------------------------------
@@ -380,7 +408,9 @@ impl WindowsControl {
         })?;
         listener
             .send(command)
-            .map_err(|_| ControlError::new("busy", "Hex's listener stopped; try again"))
+            .map_err(|_| ControlError::new("busy", "Hex's listener stopped; try again"))?;
+        crate::windows::dictation::wake();
+        Ok(())
     }
 }
 

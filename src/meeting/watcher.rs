@@ -370,6 +370,9 @@ fn handle_command(
             if let Some(active) = recording.as_ref()
                 && !active.stop.swap(true, Ordering::Relaxed)
             {
+                // Stopped by hand: the next call in the same app is offered
+                // once this one has left the microphone for a few seconds.
+                detector.recording_stopped();
                 let _ = events.send(ControllerEvent::Transcribing);
             }
         }
@@ -391,10 +394,10 @@ fn handle_command(
 /// What a recording starts with, and what the controller watches while it
 /// runs.
 struct Start {
+    /// Its `application` is the call app whose leaving the microphone ends
+    /// the call.
     meeting: MeetingStart,
     title: String,
-    /// The call app whose leaving the microphone ends the call.
-    application: Option<String>,
     app_label: String,
 }
 
@@ -403,7 +406,6 @@ impl Start {
         Self {
             meeting: candidate.recording_start(),
             title: candidate.title.clone(),
-            application: candidate.application.clone(),
             app_label: candidate.source.label().into(),
         }
     }
@@ -416,13 +418,13 @@ fn calendar_start(meeting: &CalendarMeeting) -> Start {
         meeting: MeetingStart {
             title: Some(meeting.display_title()),
             app: provider.map(|provider| provider.label().to_string()),
+            application: provider
+                .and_then(|provider| provider.application())
+                .map(str::to_string),
             calendar: Some(calendar_context(meeting)),
             title_source: meeting::TitleSource::Calendar,
         },
         title: meeting.display_title(),
-        application: provider
-            .and_then(|provider| provider.application())
-            .map(str::to_string),
         app_label: provider
             .map_or("Meeting", |provider| provider.label())
             .into(),
@@ -611,13 +613,14 @@ fn start_recording(
     let worker_stop = stop.clone();
     // Stop can send six updates before the controller next drains them.
     let (update_sender, updates) = mpsc::sync_channel(16);
+    let application = start.meeting.application.clone();
     let meeting_start = start.meeting;
     let worker =
         thread::spawn(move || meeting::record(meeting_start, &worker_stop, Some(update_sender)));
     let _ = events.send(ControllerEvent::Starting);
     *recording = Some(ActiveRecording {
         title: start.title,
-        application: start.application,
+        application,
         app_label: start.app_label,
         automatic,
         presence: CallPresence::default(),
@@ -688,6 +691,24 @@ fn poll_recording(
             },
         };
         let _ = events.send(event);
+    }
+
+    // Stopped and transcribing: detection waits, but whether the call app
+    // left the microphone meanwhile still decides when its snooze ends.
+    if let Some(active) = recording.as_ref()
+        && active.stop.load(Ordering::Relaxed)
+        && let Some(application) = active.application.as_deref()
+    {
+        match active_microphone_applications() {
+            Ok(applications) => detector.observe_call_app(
+                applications
+                    .iter()
+                    .any(|candidate| candidate.canonical_bundle_id() == Some(application)),
+            ),
+            Err(error) => {
+                tracing::debug!(%error, "could not inspect microphone activity while transcribing");
+            }
+        }
     }
 
     if let Some(active) = recording.as_mut()

@@ -33,6 +33,7 @@ use super::{
     read_body_bounded, streams, wait_for_transcript, write_response,
 };
 
+mod journal;
 mod progress;
 mod rewrite;
 
@@ -172,6 +173,9 @@ fn stream_action(request: HttpRequest, path: &str, context: &HttpContext) -> Req
                     .filter(|stream| stream.owned_by(token))
             })
         {
+            if journal::retention().is_some() {
+                stream.keep_audio();
+            }
             rewrite::watch(stream, application);
         }
         let action = action.to_owned();
@@ -388,7 +392,7 @@ fn transcribe_and_process(
         Ok(raw) => raw,
         Err(response) => return response,
     };
-    let text = process(&raw, application, None);
+    let text = process(&raw, application, None).text;
     tracing::info!(duration_ms, "remote dictation processed");
     Some(HttpResponse::json(
         200,
@@ -407,12 +411,16 @@ pub(super) fn process(
     raw: &str,
     application: String,
     deadline: Option<std::time::Duration>,
-) -> String {
+) -> crate::dictation::processor::Processed {
     let mut settings = match crate::app_settings::AppSettings::load() {
         Ok(settings) => settings,
         Err(error) => {
             tracing::error!(error = %format!("{error:#}"), "remote dictation could not read settings");
-            return raw.to_owned();
+            return crate::dictation::processor::Processed {
+                text: raw.to_owned(),
+                observation: None,
+                transformations: Vec::new(),
+            };
         }
     };
     let processing_context = crate::dictation::context::ContextSnapshot {
@@ -438,7 +446,7 @@ pub(super) fn process(
             "remote dictation post-processing fell back to the transcript"
         );
     }
-    processed.text
+    processed
 }
 
 fn vocabulary_action(request: HttpRequest, remove: bool) -> RequestAction {

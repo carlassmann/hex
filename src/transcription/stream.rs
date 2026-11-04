@@ -33,6 +33,8 @@ pub(crate) const LEASE: Duration = Duration::from_secs(10);
 pub(crate) const MAX_BACKLOG_SAMPLES: usize = 120 * SAMPLE_RATE;
 /// The longest window; the shared engine transcribes at most 30 s at once.
 pub(crate) const MAX_WINDOW_SAMPLES: usize = 25 * SAMPLE_RATE;
+/// The longest recording `keep_audio` holds.
+const MAX_KEPT_SAMPLES: usize = 30 * 60 * SAMPLE_RATE;
 /// Audio sent to the engine that it has not consumed yet. A dictation
 /// request queues behind at most this much streaming work.
 const MAX_IN_FLIGHT_SAMPLES: usize = SAMPLE_RATE * 2 / 5;
@@ -353,6 +355,8 @@ struct State {
     end: Option<End>,
     /// Bumped by each events subscriber; an older one stops.
     subscriber: u64,
+    /// Every sample received since `keep_audio`, for the remote journal.
+    kept: Option<Vec<f32>>,
 }
 
 struct Shared {
@@ -403,12 +407,27 @@ impl Stream {
             return Err(PushError::BacklogFull);
         }
         state.pending.extend(samples);
+        if let Some(kept) = &mut state.kept
+            && kept.len() + samples.len() <= MAX_KEPT_SAMPLES
+        {
+            kept.extend_from_slice(samples);
+        }
         state.backlog += samples.len();
         state.received += samples.len();
         state.lease_deadline = Instant::now() + state.lease;
         drop(state);
         self.shared.changed.notify_all();
         Ok(())
+    }
+
+    /// Keeps every sample received from now on, up to half an hour.
+    pub(crate) fn keep_audio(&self) {
+        self.shared.lock().kept.get_or_insert_with(Vec::new);
+    }
+
+    /// The audio kept since `keep_audio`, taken once.
+    pub(crate) fn take_kept_audio(&self) -> Option<Vec<f32>> {
+        self.shared.lock().kept.take()
     }
 
     /// Audio received and not yet transcribed, in milliseconds.
@@ -595,6 +614,7 @@ impl Streams {
                 partial: None,
                 end: None,
                 subscriber: 0,
+                kept: None,
             }),
             changed: Condvar::new(),
         });

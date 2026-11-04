@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::super::{HttpContext, generate_token, write_stream_headers};
+use super::journal::{self, Entry, Rewrite};
 use crate::transcription::service::{AudioClip, TranscriptionServiceError};
 use crate::transcription::stream::{CreateError, End, PushError, SampleFormat, Segment, Stream};
 
@@ -104,35 +105,55 @@ pub(super) fn finish_stream(
     };
     let audio_ms = stream.received_ms();
     let backlog_ms = stream.backlog_ms();
+    let mut entry = Entry {
+        route: "stream",
+        application: application.clone(),
+        audio_ms,
+        ..Entry::default()
+    };
     let transcribing = Instant::now();
     let early = super::rewrite::take(stream.id);
-    let (raw, segments) = match wait_for_stream(&mut progress, stream, context) {
+    let transcript = wait_for_stream(&mut progress, stream, context);
+    entry.audio = stream.take_kept_audio().unwrap_or_default();
+    let (raw, segments) = match transcript {
         Ok(transcript) => transcript,
         Err(failure) => {
             tracing::warn!(stream = stream.id, code = failure.code, message = %failure.message, audio_ms, "remote stream failed");
+            entry.error = Some(format!("{}: {}", failure.code, failure.message));
+            journal::record(entry);
             return progress.fail(failure.code, &failure.message);
         }
     };
-    let transcribe_ms = transcribing.elapsed().as_millis() as u64;
+    entry.transcribe_ms = transcribing.elapsed().as_millis() as u64;
+    entry.raw = raw.clone();
+    entry.segments = segments.clone();
     let rewritten = match early {
         Some(early) => rewrite_rest(&mut progress, early, &raw, segments, application),
-        None => rewrite(&mut progress, &raw, application).map(|(text, ms)| (text, ms, 0, 0)),
+        None => rewrite(&mut progress, &raw, application),
     };
-    let Some((text, rewrite_ms, early_pieces, kept_as_heard)) = rewritten else {
-        return;
+    let Some(rewritten) = rewritten else {
+        entry.error = Some("device-gone: the device stopped waiting".into());
+        return journal::record(entry);
     };
     tracing::info!(
         stream = stream.id,
         audio_ms,
         backlog_ms,
-        transcribe_ms,
-        rewrite_ms,
-        early_pieces,
-        kept_as_heard,
+        transcribe_ms = entry.transcribe_ms,
+        rewrite_ms = rewritten.ms,
+        early_pieces = rewritten.pieces,
+        kept_as_heard = rewritten.kept_as_heard,
         total_ms = progress.elapsed_ms(),
         "remote stream finished"
     );
-    progress.send(done(&text, &raw, audio_ms, transcribe_ms, rewrite_ms));
+    progress.send(done(
+        &rewritten.text,
+        &raw,
+        audio_ms,
+        entry.transcribe_ms,
+        rewritten.ms,
+    ));
+    entry.finish(rewritten);
 }
 
 /// A whole WAV, already uploaded and decoded, transcribed with progress.
@@ -147,6 +168,15 @@ pub(super) fn dictate(
         return;
     };
     let audio_ms = clip.duration_ms;
+    let mut entry = Entry {
+        route: "upload",
+        application: application.clone(),
+        audio_ms,
+        audio: journal::retention()
+            .map(|_| clip.samples().to_vec())
+            .unwrap_or_default(),
+        ..Entry::default()
+    };
     progress.send(json!({ "stage": "received", "durationMs": audio_ms }));
     let transcribing = Instant::now();
     let (route, raw) = match start_stream(context) {
@@ -163,23 +193,53 @@ pub(super) fn dictate(
         Ok(raw) => raw,
         Err(failure) => {
             tracing::warn!(route, code = failure.code, message = %failure.message, audio_ms, "remote dictation failed");
+            entry.error = Some(format!("{}: {}", failure.code, failure.message));
+            journal::record(entry);
             return progress.fail(failure.code, &failure.message);
         }
     };
-    let transcribe_ms = transcribing.elapsed().as_millis() as u64;
-    let Some((text, rewrite_ms)) = rewrite(&mut progress, &raw, application) else {
-        return;
+    entry.transcribe_ms = transcribing.elapsed().as_millis() as u64;
+    entry.raw = raw.clone();
+    let Some(rewritten) = rewrite(&mut progress, &raw, application) else {
+        entry.error = Some("device-gone: the device stopped waiting".into());
+        return journal::record(entry);
     };
     tracing::info!(
         route,
         audio_ms,
         upload_ms,
-        transcribe_ms,
-        rewrite_ms,
+        transcribe_ms = entry.transcribe_ms,
+        rewrite_ms = rewritten.ms,
         total_ms = progress.elapsed_ms(),
         "remote dictation finished"
     );
-    progress.send(done(&text, &raw, audio_ms, transcribe_ms, rewrite_ms));
+    progress.send(done(
+        &rewritten.text,
+        &raw,
+        audio_ms,
+        entry.transcribe_ms,
+        rewritten.ms,
+    ));
+    entry.finish(rewritten);
+}
+
+/// A transcript through the Modes.
+struct Rewritten {
+    text: String,
+    ms: u64,
+    /// Pieces rewritten while the stream recorded.
+    pieces: usize,
+    kept_as_heard: usize,
+    rewrites: Vec<Rewrite>,
+}
+
+impl Entry {
+    fn finish(mut self, rewritten: Rewritten) {
+        self.rewrite_ms = rewritten.ms;
+        self.text = rewritten.text;
+        self.rewrites = rewritten.rewrites;
+        journal::record(self);
+    }
 }
 
 fn done(text: &str, raw: &str, audio_ms: u64, transcribe_ms: u64, rewrite_ms: u64) -> Value {
@@ -354,7 +414,7 @@ fn service_failure(error: TranscriptionServiceError) -> Failure {
 
 /// Runs the Modes on `raw`, sending a line each second; `None` when the
 /// device left meanwhile.
-fn rewrite(progress: &mut Progress, raw: &str, application: String) -> Option<(String, u64)> {
+fn rewrite(progress: &mut Progress, raw: &str, application: String) -> Option<Rewritten> {
     let started = Instant::now();
     if !progress.send(json!({ "stage": "rewriting" })) {
         return None;
@@ -367,31 +427,41 @@ fn rewrite(progress: &mut Progress, raw: &str, application: String) -> Option<(S
             let _ = sender.send(super::process(&raw_owned, application, None));
         })
         .ok()?;
-    let text = loop {
+    let processed = loop {
         match receiver.recv_timeout(TICK) {
-            Ok(text) => break text,
+            Ok(processed) => break Some(processed),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 if !progress.send(json!({ "stage": "rewriting" })) {
                     return None;
                 }
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break raw.to_owned(),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break None,
         }
     };
-    Some((text, started.elapsed().as_millis() as u64))
+    let ms = started.elapsed().as_millis() as u64;
+    let rewrites = processed
+        .iter()
+        .map(|processed| Rewrite::new("whole", raw, processed, ms))
+        .collect();
+    Some(Rewritten {
+        text: processed.map_or_else(|| raw.to_owned(), |processed| processed.text),
+        ms,
+        pieces: 0,
+        kept_as_heard: 0,
+        rewrites,
+    })
 }
 
 /// Finishes a stream rewritten while it recorded: only the text after its
 /// last piece is left, plus any piece OpenCode still has, waited on as long
-/// as the Modes' own deadline. Returns the text, the time it took, the pieces
-/// rewritten while recording, and how many were kept as heard.
+/// as the Modes' own deadline.
 fn rewrite_rest(
     progress: &mut Progress,
     early: Arc<super::rewrite::EarlyRewrite>,
     raw: &str,
     segments: Vec<Segment>,
     application: String,
-) -> Option<(String, u64, usize, usize)> {
+) -> Option<Rewritten> {
     let started = Instant::now();
     if !progress.send(json!({ "stage": "rewriting" })) {
         return None;
@@ -410,7 +480,7 @@ fn rewrite_rest(
         .name("remote-rewrite".into())
         .spawn(move || {
             let finished = early.finish(&segments, wait, |rest| {
-                super::process(&rest, application, None)
+                super::process(rest, application, None)
             });
             let _ = sender.send(finished);
         })
@@ -428,14 +498,16 @@ fn rewrite_rest(
                     text: raw.to_owned(),
                     pieces: 0,
                     kept_as_heard: 0,
+                    rewrites: Vec::new(),
                 };
             }
         }
     };
-    Some((
-        finished.text,
-        started.elapsed().as_millis() as u64,
-        finished.pieces,
-        finished.kept_as_heard,
-    ))
+    Some(Rewritten {
+        text: finished.text,
+        ms: started.elapsed().as_millis() as u64,
+        pieces: finished.pieces,
+        kept_as_heard: finished.kept_as_heard,
+        rewrites: finished.rewrites,
+    })
 }

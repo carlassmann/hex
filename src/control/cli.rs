@@ -36,6 +36,22 @@ pub enum RemoteCli {
     Revoke { id: String },
     /// Stop serving paired devices (after Hex restarts).
     Disable,
+    /// Pair this Hex with another one, so Labs › Remote transcription can send it dictations.
+    Connect {
+        /// The address the other Hex's `hex remote pair` printed, such as host.ts.net:47831.
+        address: String,
+        /// Its one-time code.
+        code: String,
+    },
+    /// Forget the Hex this one is connected to.
+    Disconnect,
+    /// Send a WAV to the connected Hex and print what it made of it.
+    Send {
+        wav: std::path::PathBuf,
+        /// The app the dictation is for, so the other Hex's Modes for it apply.
+        #[arg(long)]
+        app: Option<String>,
+    },
 }
 
 /// The control commands at the top of `hex`.
@@ -452,6 +468,37 @@ fn remote_command(command: RemoteCli) -> color_eyre::Result<u8> {
         RemoteCli::Disable => {
             remote_pairing::set_enabled(false)?;
             println!("Remote dictation turns off when Hex restarts.");
+            Ok(0)
+        }
+        RemoteCli::Connect { address, code } => {
+            let url = if address.contains("://") {
+                address
+            } else {
+                format!("https://{address}")
+            };
+            let connection = crate::remote_client::connect(&url, &code)?;
+            println!(
+                "Connected to {} ({}).",
+                connection.machine_label, connection.url
+            );
+            println!("Turn on Labs › Remote transcription to send it your dictations.");
+            Ok(0)
+        }
+        RemoteCli::Disconnect => {
+            if crate::remote_client::disconnect()? {
+                println!("Disconnected. The other Hex lists this one until you revoke it there.");
+            } else {
+                println!("Not connected.");
+            }
+            Ok(0)
+        }
+        RemoteCli::Send { wav, app } => {
+            let connection = crate::remote_client::connection()?
+                .ok_or_else(|| color_eyre::eyre::eyre!("Not connected; run hex remote connect"))?;
+            let wav = std::fs::read(&wav)?;
+            let dictated = crate::remote_client::dictate_wav(&connection, &wav, app.as_deref())?;
+            println!("{}", dictated.text);
+            eprintln!("\nHeard: {}", dictated.raw);
             Ok(0)
         }
     }

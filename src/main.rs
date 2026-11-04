@@ -55,6 +55,7 @@ mod personal_commands;
 mod policy;
 #[cfg(target_os = "macos")]
 mod recognition;
+mod remote_client;
 mod remote_pairing;
 mod rune_hud;
 mod rune_ui;

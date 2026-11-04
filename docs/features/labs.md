@@ -59,6 +59,7 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 ├── Keep recordings no    labs.keep_recordings         History entries keep their dictation audio; Transcribe again runs it through another installed model (#1032)
 ├── Hide menu bar icon no labs.hide_menu_bar_icon      (macOS) the menu-bar icon hides while no meeting is under way; shortcuts keep working, reopening Hex shows Settings (#1064)
 ├── Notch indicator no    labs.notch_indicator         (macOS) with the indicator at Top, the notch widens sideways in the Dynamic Island's compact style: an orange mic and level bars, the macOS spinner, a green checkmark; flat screens keep it below the menu bar
+├── Remote transcription no labs.remote_transcription (macOS) dictations go to the Hex paired with `hex remote connect`, which transcribes them and runs its Modes; this Mac's own transcript and Output steps when it can't be reached
 ├── Movable meeting capsules no labs.movable_meeting_capsules (macOS) panel capsules (Meeting transcript ready, Recording automatically, offers, reminders) drag to another corner and show in the last one, shared with the recording capsule (#1093)
 ├── Choose meeting summary model no labs.meeting_summary_model + meetings.opencode_model (every OS with Meetings)
 │                                        OpenCode meeting notes use exactly that provider/model, no fallback; Meetings › Settings › Advanced shows its field (#1107)
@@ -875,6 +876,36 @@ with `HEX_HUD_EARS=1` and `rune_hud_frames`. Not yet observed: a real
 dictation through the ears on a Mac with the lab on (`hex dev hud` drives
 them in a debug build), and the failure glyph, which no render covers yet; the
 row renders only in macOS builds, so no golden changes.
+
+Remote transcription (`remote-transcription`, macOS only): for sharing one
+model and one Output pipeline between a Mac, a phone, and the machine that
+serves them (`hex remote pair` there, `local_api::remote`). `hex remote
+connect <address> <code>` (every OS) trades that machine's one-time code for a
+device token in `remote-client.json` (0600, never `settings.json`); `hex remote
+disconnect` forgets it and `hex remote send <wav> [--app <name>]` sends a file
+and prints the text. With the lab on and a connection saved:
+
+```ts
+Paste or Print dictation finishes
+├── local transcript       -> runs as before (live stream, engine), kept as the fallback
+└── processor worker       -> POST /remote/dictations?progress=1 (WAV, X-Hex-Application: frontmost app)
+    ├── done               -> its text pastes; History raw is its transcript; no local Modes or transformations
+    └── failed, unreachable, or past 30 s (+10 s per minute of audio)
+                           -> this Mac's Modes on the local transcript, as with the lab off
+```
+
+The gate, `remote_client::active()`, is read as each dictation is submitted
+(`DictationWorker::submit` in [parakeet.rs](../../src/parakeet.rs)); raw
+dictations and the local API's host audio stay local. The serving machine
+journals these like a phone's dictations (`HEX_REMOTE_JOURNAL`). Checks:
+`remote_transcription_is_its_own_bit_and_off_by_default` in
+[labs.rs](../../src/labs.rs); the WAV, header, and progress-line tests in
+[remote_client.rs](../../src/remote_client.rs). Observed: `hex remote connect`
+and `hex remote send` from Linux against a Linux Hex over its tailnet HTTPS
+address (a 2 s clip in about 1 s, 30 s in about 5.5 s, journaled with the
+`--app` name). Not yet observed: a dictation on a real Mac with the lab on (the
+worker hook compiles only on macOS); the row renders only in macOS builds, so
+no golden changes.
 
 Movable meeting capsules (`movable-meeting-capsules`, issue 1093, macOS
 like Meetings; its row shows wherever Meetings does, in macOS builds): for

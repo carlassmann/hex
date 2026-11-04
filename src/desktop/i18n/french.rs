@@ -23,6 +23,8 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Hex is up to date", "Hex est à jour"),
     ("Couldn't check for updates", "Impossible de rechercher les mises à jour"),
     ("{model} · Language: {language}", "{model} · Langue : {language}"),
+    ("Remote transcription", "Transcription à distance"),
+    ("Send dictations to the Hex you connected with hex remote connect, which transcribes them and runs its Output steps. When it can't be reached, this Mac does", "Envoie les dictées au Hex connecté avec hex remote connect, qui les transcrit et applique ses étapes de Sortie. S'il est injoignable, ce Mac s'en charge"),
     ("Notch indicator", "Indicateur dans l'encoche"),
     ("On a screen with a notch, the recording indicator grows out of the notch instead of sitting below the menu bar", "Sur un écran avec une encoche, l'indicateur d'enregistrement sort de l'encoche au lieu de s'afficher sous la barre des menus"),
     ("Hide menu bar icon", "Masquer l'icône de la barre des menus"),

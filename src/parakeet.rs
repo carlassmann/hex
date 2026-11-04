@@ -108,6 +108,15 @@ struct InferenceJob {
     context: ContextSnapshot,
     /// The clip, kept for History while Labs › Keep recordings is on.
     recording: Option<crate::history::Recording>,
+    remote: Option<RemoteClip>,
+}
+
+/// A clip for the Hex this one is connected to (Labs › Remote
+/// transcription), which transcribes it and runs its own Modes. The local
+/// transcript still runs beside it, so a failed send falls back at once.
+struct RemoteClip {
+    connection: crate::remote_client::Connection,
+    samples: Vec<f32>,
 }
 
 struct ProcessorJob {
@@ -118,6 +127,7 @@ struct ProcessorJob {
     context: ContextSnapshot,
     timings: JobTimings,
     recording: Option<crate::history::Recording>,
+    remote: Option<RemoteClip>,
 }
 
 /// Pipeline timings carried from inference through output for the final log.
@@ -391,6 +401,16 @@ impl DictationWorker {
             TranscriptionTarget::Service => None,
             _ => crate::history::Recording::keep(&samples),
         };
+        let remote = matches!(
+            target,
+            TranscriptionTarget::Paste | TranscriptionTarget::Print
+        )
+        .then(crate::remote_client::active)
+        .flatten()
+        .map(|connection| RemoteClip {
+            connection,
+            samples: samples.clone(),
+        });
         let prepare_ms = submitted_at.elapsed().as_millis();
         let offline = {
             let control = control.clone();
@@ -420,6 +440,7 @@ impl DictationWorker {
             target,
             context,
             recording,
+            remote,
         })
         .map(|()| {
             state.next_sequence += 1;
@@ -574,13 +595,26 @@ fn run_processor_worker(
             let _ = output.send(OutputJob::Cancelled { job_id: job.job_id });
             continue;
         }
-        let mut processed =
-            process_job_text(&job, crate::dictation::config::dictation_profiles, || {
-                let _ = events.send(WorkerEvent::Stage {
-                    job_id: job.job_id,
-                    stage: DictationJobStage::Processing,
-                });
+        let processing = || {
+            let _ = events.send(WorkerEvent::Stage {
+                job_id: job.job_id,
+                stage: DictationJobStage::Processing,
             });
+        };
+        let (mut processed, raw) = match job.remote.as_ref().and_then(|remote| {
+            processing();
+            dictate_remotely(remote, &job.context)
+        }) {
+            Some(remote) => remote,
+            None => (
+                process_job_text(
+                    &job,
+                    crate::dictation::config::dictation_profiles,
+                    processing,
+                ),
+                job.text.clone(),
+            ),
+        };
         processed.apply_transformations(transformations, &job.context, &job.control.cancelled);
         if job.control.is_cancelled() {
             let _ = output.send(OutputJob::Cancelled { job_id: job.job_id });
@@ -602,7 +636,7 @@ fn run_processor_worker(
                 target: job.target,
                 result: Box::new(Ok(CompletedTranscript {
                     text: processed.text,
-                    raw: job.text,
+                    raw,
                     application: job.context.application,
                     timings: job.timings,
                     processing: processed.observation,
@@ -612,6 +646,41 @@ fn run_processor_worker(
             .is_err()
         {
             break;
+        }
+    }
+}
+
+/// The connected Hex's text and raw transcript for `remote`, or `None` to
+/// process the local transcript instead.
+fn dictate_remotely(
+    remote: &RemoteClip,
+    context: &ContextSnapshot,
+) -> Option<(crate::dictation::processor::Processed, String)> {
+    let started = Instant::now();
+    match crate::remote_client::dictate(
+        &remote.connection,
+        &remote.samples,
+        context.application.as_deref(),
+    ) {
+        Ok(dictated) => Some((
+            crate::dictation::processor::Processed {
+                text: dictated.text,
+                observation: Some(ProcessingObservation {
+                    profile: format!("remote: {}", remote.connection.machine_label),
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    fallback: None,
+                }),
+                transformations: Vec::new(),
+            },
+            dictated.raw,
+        )),
+        Err(error) => {
+            tracing::warn!(
+                machine = remote.connection.machine_label,
+                error = %format!("{error:#}"),
+                "remote transcription failed; using this Mac's transcript"
+            );
+            None
         }
     }
 }
@@ -803,6 +872,7 @@ fn run_inference_worker(
                         context: job.context,
                         timings,
                         recording: job.recording,
+                        remote: job.remote,
                     })
                     .is_err()
                 {
@@ -1318,6 +1388,7 @@ mod tests {
                 inference_ms: 0,
             },
             recording: None,
+            remote: None,
         }
     }
 

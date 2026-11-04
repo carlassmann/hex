@@ -102,10 +102,11 @@ pub enum Feature {
     GnomeClipboardRestore,
     MeetingNotesVocabulary,
     NotchIndicator,
+    RemoteTranscription,
 }
 
 impl Feature {
-    pub const ALL: [Self; 43] = [
+    pub const ALL: [Self; 44] = [
         Self::Meetings,
         Self::VoiceFilter,
         Self::Playground,
@@ -149,6 +150,7 @@ impl Feature {
         Self::GnomeClipboardRestore,
         Self::MeetingNotesVocabulary,
         Self::NotchIndicator,
+        Self::RemoteTranscription,
     ];
 
     /// The features this OS and build have.
@@ -214,7 +216,8 @@ impl Feature {
             | Self::MeetingSummaryModel
             | Self::GnomeClipboardRestore
             | Self::MeetingNotesVocabulary
-            | Self::NotchIndicator => Audience::Everyone,
+            | Self::NotchIndicator
+            | Self::RemoteTranscription => Audience::Everyone,
         }
     }
 
@@ -263,7 +266,8 @@ impl Feature {
             | Self::SidedChords
             | Self::RecentDictations
             | Self::HideMenuBarIcon
-            | Self::NotchIndicator => cfg!(target_os = "macos"),
+            | Self::NotchIndicator
+            | Self::RemoteTranscription => cfg!(target_os = "macos"),
             Self::TapOrHold => cfg!(any(target_os = "macos", target_os = "linux")),
             Self::KeyboardModelSwitching => crate::keyboard_input_sources::available(),
             Self::Playground
@@ -334,6 +338,7 @@ impl Feature {
             Self::GnomeClipboardRestore => "gnome-clipboard-restore",
             Self::MeetingNotesVocabulary => "meeting-notes-vocabulary",
             Self::NotchIndicator => "notch-indicator",
+            Self::RemoteTranscription => "remote-transcription",
         }
     }
 
@@ -383,6 +388,7 @@ impl Feature {
             Self::GnomeClipboardRestore => "labs.gnome_clipboard_restore",
             Self::MeetingNotesVocabulary => "labs.meeting_notes_vocabulary",
             Self::NotchIndicator => "labs.notch_indicator",
+            Self::RemoteTranscription => "labs.remote_transcription",
         }
     }
 
@@ -500,6 +506,9 @@ impl Feature {
             Self::NotchIndicator => {
                 "On a screen with a notch, the recording indicator grows out of the notch instead of sitting below the menu bar"
             }
+            Self::RemoteTranscription => {
+                "Send dictations to the Hex you connected with hex remote connect, which transcribes them and runs its Output steps. When it can't be reached, this Mac does"
+            }
         }
     }
 
@@ -553,6 +562,7 @@ impl Feature {
             Self::GnomeClipboardRestore => settings.labs.gnome_clipboard_restore,
             Self::MeetingNotesVocabulary => settings.labs.meeting_notes_vocabulary,
             Self::NotchIndicator => settings.labs.notch_indicator,
+            Self::RemoteTranscription => settings.labs.remote_transcription,
         }
     }
 
@@ -604,6 +614,7 @@ impl Feature {
             &mut labs.gnome_clipboard_restore,
             &mut labs.meeting_notes_vocabulary,
             &mut labs.notch_indicator,
+            &mut labs.remote_transcription,
         ]
     }
 
@@ -655,6 +666,7 @@ impl Feature {
             Self::GnomeClipboardRestore => settings.labs.gnome_clipboard_restore = on,
             Self::MeetingNotesVocabulary => settings.labs.meeting_notes_vocabulary = on,
             Self::NotchIndicator => settings.labs.notch_indicator = on,
+            Self::RemoteTranscription => settings.labs.remote_transcription = on,
             // Off, no shortcut keeps a key only the feature allows.
             Self::StandaloneSpecialKeys => {
                 settings.labs.standalone_special_keys = on;
@@ -697,6 +709,7 @@ const MEETING_SUMMARY_MODEL: u64 = 1 << 24;
 const GNOME_CLIPBOARD_RESTORE: u64 = 1 << 25;
 const MEETING_NOTES_VOCABULARY: u64 = 1 << 26;
 const NOTCH_INDICATOR: u64 = 1 << 27;
+const REMOTE_TRANSCRIPTION: u64 = 1 << 28;
 /// Unload-idle minutes (at most 1,440, 11 bits) sit above the switches.
 const MINUTES_SHIFT: u64 = 32;
 
@@ -881,6 +894,13 @@ pub fn notch_indicator() -> bool {
     on(NOTCH_INDICATOR) && Feature::NotchIndicator.on_this_os()
 }
 
+/// Dictations go to the Hex this one is connected to (macOS; read as each
+/// dictation is submitted).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn remote_transcription() -> bool {
+    on(REMOTE_TRANSCRIPTION) && Feature::RemoteTranscription.on_this_os()
+}
+
 /// A paste on a Wayland desktop without data-control (GNOME) snapshots and
 /// restores the clipboard through an already running XWayland (Linux; read
 /// as each paste starts).
@@ -1008,6 +1028,11 @@ fn encode_where(settings: &LabsSettings, reaches: impl Fn(Feature) -> bool) -> u
             Feature::NotchIndicator,
             settings.notch_indicator,
             NOTCH_INDICATOR,
+        ),
+        (
+            Feature::RemoteTranscription,
+            settings.remote_transcription,
+            REMOTE_TRANSCRIPTION,
         ),
     ]
     .into_iter()
@@ -1430,6 +1455,18 @@ mod tests {
         let state = encode_where(&labs, |_| true);
         assert_ne!(state & HIDE_MENU_BAR_ICON, 0);
         assert_eq!(state & KEEP_RECORDINGS, 0);
+        assert_eq!(state >> MINUTES_SHIFT, 24 * 60);
+    }
+
+    #[test]
+    fn remote_transcription_is_its_own_bit_and_off_by_default() {
+        let mut labs = LabsSettings::default();
+        assert_eq!(encode_where(&labs, |_| true) & REMOTE_TRANSCRIPTION, 0);
+        labs.remote_transcription = true;
+        labs.unload_idle_minutes = 24 * 60;
+        let state = encode_where(&labs, |_| true);
+        assert_ne!(state & REMOTE_TRANSCRIPTION, 0);
+        assert_eq!(state & NOTCH_INDICATOR, 0);
         assert_eq!(state >> MINUTES_SHIFT, 24 * 60);
     }
 

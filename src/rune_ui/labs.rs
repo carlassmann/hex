@@ -345,6 +345,13 @@ fn rows(ui: &Ui) -> Vec<Row> {
                 tr("Notch indicator"),
                 tr("On a screen with a notch, the recording indicator grows out of the notch instead of sitting below the menu bar"),
             ));
+            // macOS's dictation worker is the only one that sends clips away.
+            rows.push(row(
+                Feature::RemoteTranscription,
+                &WAVE,
+                tr("Remote transcription"),
+                tr("Send dictations to the Hex you connected with hex remote connect, which transcribes them and runs its Output steps. When it can't be reached, this Mac does"),
+            ));
         }
     }
     // Linux's X11 grabs and shortcuts portal take these keys alone.
@@ -543,6 +550,7 @@ fn row_key(feature: Feature) -> &'static str {
         Feature::GnomeClipboardRestore => "lab-gnome-clipboard-restore",
         Feature::MeetingNotesVocabulary => "lab-meeting-notes-vocabulary",
         Feature::NotchIndicator => "lab-notch-indicator",
+        Feature::RemoteTranscription => "lab-remote-transcription",
     }
 }
 

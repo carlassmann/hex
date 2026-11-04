@@ -179,7 +179,7 @@ fn update(change: impl FnOnce(&mut Store) -> Result<()>) -> Result<()> {
     write_private(&path()?, &serde_json::to_vec_pretty(&store)?)
 }
 
-fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }

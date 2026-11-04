@@ -308,6 +308,7 @@ struct KeyboardBridge {
         static let command = "keyboard.command"
         static let modelInstalled = "model.installed"
         static let transcriberName = "model.transcriberName"
+        static let transcriptionStatus = "dictation.transcriptionStatus"
         static let pendingWords = "vocabulary.pendingWords"
         static let snapshot = "keyboard.snapshot"
         static let warmDuration = "settings.warmDuration"
@@ -380,6 +381,12 @@ struct KeyboardBridge {
         nonmutating set {
             defaults?.set(newValue.rawValue, forKey: Key.style)
         }
+    }
+
+    /// Where the current transcription is at ("cshed · rewriting · 0:07"), or nil.
+    var transcriptionStatus: String? {
+        get { defaults?.string(forKey: Key.transcriptionStatus) }
+        nonmutating set { defaults?.set(newValue, forKey: Key.transcriptionStatus) }
     }
 
     /// Where dictations are transcribed: a paired Hex's name, or nil for this iPhone.

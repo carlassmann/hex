@@ -60,6 +60,8 @@ final class KeyboardViewModel: ObservableObject {
     @Published var quickReturnApps: [HostApp] = HostAppCatalog.quickChips
     /// The paired Hex that transcribes, or nil when this iPhone does.
     @Published var transcriberName: String?
+    /// The containing app's "cshed · rewriting · 0:07" while it transcribes.
+    @Published var transcriptionStatus: String?
     /// The selected text in the host field, when it could be a word-list entry.
     @Published var selectedWord: String?
     @Published var addedWord: String?
@@ -666,7 +668,7 @@ struct KeyboardSurfaceView: View {
             }
             .hexTrayReveal(showRecordingClock, reduceMotion: reduceMotion, offsetY: 2)
 
-            Text("Transcribing on \(model.transcriberName ?? "iPhone")")
+            Text(model.transcriptionStatus ?? "Transcribing on \(model.transcriberName ?? "iPhone")")
                 .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(p.textMuted)
                 .lineLimit(1)

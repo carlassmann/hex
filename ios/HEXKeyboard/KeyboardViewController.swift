@@ -230,6 +230,10 @@ final class KeyboardViewController: UIInputViewController {
         if viewModel.transcriberName != transcriberName {
             viewModel.transcriberName = transcriberName
         }
+        let transcriptionStatus = snap.state == .transcribing ? bridge.transcriptionStatus : nil
+        if viewModel.transcriptionStatus != transcriptionStatus {
+            viewModel.transcriptionStatus = transcriptionStatus
+        }
 
         viewModel.applyBridgeState(
             hasFullAccess: true,

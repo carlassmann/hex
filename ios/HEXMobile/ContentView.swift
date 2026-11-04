@@ -328,6 +328,19 @@ struct ContentView: View {
             .padding(.horizontal, 18)
             .hexControlReveal(showPreparing, reduceMotion: reduceMotion, scale: 0.96, blur: 2.0)
 
+            Text(dictation.transcriptionStatus ?? "Transcribing…")
+                .font(.system(size: 13, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(HexTheme.textBase)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(.black.opacity(0.45), in: Capsule())
+                .padding(.horizontal, 18)
+                .allowsHitTesting(false)
+                .hexControlReveal(mode == .transcribing, reduceMotion: reduceMotion, scale: 0.96, blur: 2.0)
+
             Text("Allow microphone access…")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(HexTheme.textMuted)
@@ -726,7 +739,7 @@ struct ContentView: View {
 
                                 Button("Try again") {
                                     withAnimation(HexMotion.stageAnimation(reduceMotion: reduceMotion)) {
-                                        dictation.prepareModel()
+                                        dictation.performPrimaryAction()
                                     }
                                 }
                                 .font(.system(size: 15, weight: .semibold))
@@ -886,6 +899,8 @@ struct ContentView: View {
 
     private var primaryActionLabel: String {
         switch dictation.phase {
+        case .failed where dictation.unsentRecording != nil:
+            "Try again"
         case .modelRequired, .failed:
             "Set up"
         default:
@@ -895,6 +910,8 @@ struct ContentView: View {
 
     private var primaryActionIcon: String {
         switch dictation.phase {
+        case .failed where dictation.unsentRecording != nil:
+            "arrow.clockwise"
         case .modelRequired, .failed:
             "arrow.down"
         default:
@@ -917,7 +934,7 @@ struct ContentView: View {
         case .preparingModel:
             return "Preparing model…"
         case .transcribing:
-            return "Transcribing…"
+            return dictation.transcriptionStatus ?? "Transcribing…"
         case .ready where dictation.keyboardSessionEnabled:
             return "Ready"
         default:

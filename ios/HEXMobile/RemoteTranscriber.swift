@@ -142,9 +142,10 @@ enum RemoteHexPairing {
 }
 
 /// Sends each recording to the paired Hex, which transcribes it with its own model and applies
-/// its Modes (an `iPhone` Mode there can clean up spoken self-corrections).
-/// Falls back to the on-device transcriber whenever that Hex doesn't answer in time,
-/// unless that fallback is turned off.
+/// its Modes (an `iPhone` Mode there can clean up spoken self-corrections). The audio goes out
+/// while it is recorded, so a long dictation is mostly done when it ends; when that stream
+/// breaks, the finished recording is uploaded whole. Falls back to the on-device transcriber
+/// whenever that Hex can't answer, unless that fallback is turned off.
 actor RemoteTranscriber: LocalTranscribing {
     nonisolated let displayName: String
 
@@ -152,6 +153,7 @@ actor RemoteTranscriber: LocalTranscribing {
     private let token: String
     private let fallback: any LocalTranscribing
     private let session: URLSession
+    private var stream: RemoteStream?
 
     var languageName: String {
         "Set on \(hex.name)"
@@ -163,6 +165,8 @@ actor RemoteTranscriber: LocalTranscribing {
         self.fallback = fallback
         self.displayName = hex.name
         let configuration = URLSessionConfiguration.ephemeral
+        // The longest gap between bytes. Hex sends a progress line every second while it
+        // works, so this passes only when it is gone, however long the dictation.
         configuration.timeoutIntervalForRequest = 15
         configuration.waitsForConnectivity = false
         self.session = URLSession(configuration: configuration)
@@ -175,35 +179,111 @@ actor RemoteTranscriber: LocalTranscribing {
         try await fallback.prepare(progressHandler: progressHandler)
     }
 
-    func transcribe(_ audioURL: URL) async throws -> String {
-        do {
-            return try await transcribeRemotely(audioURL)
-        } catch {
-            guard PairedHexStore.fallsBackToDevice else { throw Unavailable(name: hex.name) }
-            NSLog("\(hex.name) unavailable, transcribing on device: \(error.localizedDescription)")
-            return try await fallback.transcribe(audioURL)
-        }
+    func recordingStarted(_ audioURL: URL) async {
+        await stream?.cancel()
+        let application = await MainActor.run { UIDevice.current.model }
+        let stream = RemoteStream(
+            hex: hex,
+            token: token,
+            audioURL: audioURL,
+            application: application,
+            session: session
+        )
+        self.stream = stream
+        await stream.start()
     }
 
-    private func transcribeRemotely(_ audioURL: URL) async throws -> String {
-        var request = URLRequest(url: hex.url.appendingPathComponent("remote/dictations"))
+    func recordingCancelled() async {
+        await stream?.cancel()
+        stream = nil
+    }
+
+    func transcribe(_ audioURL: URL) async throws -> String {
+        try await transcribe(audioURL, progress: { _ in })
+    }
+
+    func transcribe(
+        _ audioURL: URL,
+        progress: @escaping @Sendable (TranscriptionProgress) -> Void
+    ) async throws -> String {
+        // A retried recording was kept after its stream ended; only the recording being
+        // finished has one.
+        let stream = self.stream?.audioURL == audioURL ? self.stream : nil
+        if stream != nil { self.stream = nil }
+        var reason: String
+        do {
+            return try await transcribeRemotely(audioURL, stream: stream, progress: progress)
+        } catch {
+            if error is CancellationError || Task.isCancelled { throw CancellationError() }
+            reason = Self.reason(error)
+        }
+        NSLog("\(hex.name) unavailable (\(reason))")
+        guard PairedHexStore.fallsBackToDevice else { throw Unavailable(name: hex.name, reason: reason) }
+        progress(TranscriptionProgress(
+            machine: "iPhone",
+            stage: .transcribing,
+            fallbackReason: "\(hex.name): \(reason)"
+        ))
+        return try await fallback.transcribe(audioURL)
+    }
+
+    private func transcribeRemotely(
+        _ audioURL: URL,
+        stream: RemoteStream?,
+        progress: @escaping @Sendable (TranscriptionProgress) -> Void
+    ) async throws -> String {
+        if let stream {
+            do {
+                return try await stream.finish(progress: progress)
+            } catch {
+                if error is CancellationError || Task.isCancelled { throw CancellationError() }
+                NSLog("\(hex.name) stream failed, uploading the whole recording: \(Self.reason(error))")
+            }
+        }
+        progress(TranscriptionProgress(machine: hex.name, stage: .uploading))
+        var components = URLComponents(
+            url: hex.url.appendingPathComponent("remote/dictations"),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [URLQueryItem(name: "progress", value: "1")]
+        guard let url = components?.url else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(await MainActor.run { UIDevice.current.model }, forHTTPHeaderField: "X-Hex-Application")
-        let (data, response) = try await session.upload(for: request, fromFile: audioURL)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw URLError(.badServerResponse)
+        request.httpBody = try Data(contentsOf: audioURL, options: .mappedIfSafe)
+        return try await RemoteProgressReader.read(
+            request: request,
+            session: session,
+            machine: hex.name,
+            progress: progress
+        )
+    }
+
+    private static func reason(_ error: Error) -> String {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut: return "stopped answering"
+            case .notConnectedToInternet, .networkConnectionLost: return "no connection"
+            case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed: return "not reachable"
+            default: return urlError.localizedDescription
+            }
         }
-        return try JSONDecoder().decode(Dictation.self, from: data).text
+        if case RemoteStream.Failure.refused(let code) = error {
+            switch code {
+            case "model-not-ready", "model-not-loaded": return "its model isn't ready"
+            case "queue-full", "stream-busy": return "busy with another transcription"
+            case "not-paired": return "this iPhone isn't paired anymore"
+            default: return code
+            }
+        }
+        return error.localizedDescription
     }
 
     private struct Unavailable: LocalizedError {
         let name: String
-        var errorDescription: String? { "\(name) didn't answer, so nothing was transcribed." }
-    }
-
-    private struct Dictation: Decodable {
-        let text: String
+        let reason: String
+        var errorDescription: String? { "\(name): \(reason)." }
     }
 }

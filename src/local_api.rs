@@ -17,6 +17,8 @@ mod dictation;
 mod discovery;
 mod http;
 mod remote;
+mod remote_progress;
+mod remote_rewrite;
 mod streams;
 
 #[cfg(debug_assertions)]
@@ -624,13 +626,19 @@ fn http_worker(pending: Arc<Mutex<Receiver<TcpStream>>>, context: Arc<HttpContex
                 application,
                 content_length,
                 body_prefix,
+                progress,
             } => remote::dictate(
                 &mut stream,
                 application,
                 content_length,
                 body_prefix,
+                progress,
                 &context,
             ),
+            RequestAction::RemoteStreamFinish {
+                stream: remote_stream,
+                application,
+            } => remote_progress::finish_stream(&mut stream, &remote_stream, application, &context),
             RequestAction::RemoteVocabulary {
                 remove,
                 content_length,
@@ -1017,7 +1025,7 @@ fn transcribe_audio(
     shutdown: &AtomicBool,
     admission: crate::transcription::service::AudioAdmission,
 ) -> Option<HttpResponse> {
-    let clip = match read_audio(stream, content_length, body, shutdown) {
+    let clip = match read_audio(stream, content_length, body, shutdown, UPLOAD_DEADLINE) {
         Ok(clip) => clip,
         Err(response) => return response,
     };
@@ -1040,6 +1048,7 @@ fn read_audio(
     content_length: usize,
     mut body: Vec<u8>,
     shutdown: &AtomicBool,
+    deadline: Duration,
 ) -> std::result::Result<crate::transcription::service::AudioClip, Option<HttpResponse>> {
     if let Err(error) = read_body_bounded(
         stream,
@@ -1047,7 +1056,7 @@ fn read_audio(
         &mut body,
         shutdown,
         MAX_AUDIO_BYTES,
-        UPLOAD_DEADLINE,
+        deadline,
     ) {
         return Err(match error {
             BodyReadError::ResourceExhausted => Some(HttpResponse::code(413, "resource-exhausted")),
@@ -1426,6 +1435,11 @@ enum RequestAction {
         application: String,
         content_length: usize,
         body_prefix: Vec<u8>,
+        progress: bool,
+    },
+    RemoteStreamFinish {
+        stream: Arc<crate::transcription::stream::Stream>,
+        application: String,
     },
     RemoteVocabulary {
         remove: bool,

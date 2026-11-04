@@ -9,7 +9,13 @@
 //! - `POST /remote/dictations`: a WAV recording in, `{text, raw}` out, transcribed
 //!   with this machine's selected model and processed by its Modes, as if it
 //!   were dictated here into an app named after the device (`X-Hex-Application`,
-//!   default the device's label), so a mode can target it.
+//!   default the device's label), so a mode can target it. With `?progress=1`
+//!   it answers NDJSON progress instead (`remote_progress`).
+//! - `POST /remote/streams` and `/remote/streams/{id}/{audio,heartbeat,cancel}`:
+//!   the `/streams` routes (`docs/streams.md`) for a device that sends audio
+//!   while it records, so a long dictation is mostly transcribed by its end.
+//!   `POST /remote/streams/{id}/finish` answers NDJSON progress and then the
+//!   text, processed by the Modes like a dictation.
 //! - `GET /remote/vocabulary`: this machine's word list, `{terms}`.
 //! - `POST /remote/vocabulary` `{term, soundsLike?}` adds a word (or spellings);
 //!   `POST /remote/vocabulary/remove` `{term}` removes one. Both answer the new
@@ -24,11 +30,13 @@ use crate::control::{ControlCall, ControlCommand, ControlReply, ControlRequest};
 
 use super::{
     HttpContext, HttpRequest, HttpResponse, RequestAction, UPLOAD_DEADLINE, read_audio,
-    read_body_bounded, wait_for_transcript, write_response,
+    read_body_bounded, streams, wait_for_transcript, write_response,
 };
 
 const MAX_PAIR_BYTES: usize = 1024;
 const MAX_VOCABULARY_EDIT_BYTES: usize = 4096;
+/// A phone uploading a long dictation over a slow cellular link.
+const DICTATION_UPLOAD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,15 +91,25 @@ struct DictationResponse {
     duration_ms: u64,
 }
 
-pub(super) fn handle_request(request: HttpRequest, _context: &HttpContext) -> RequestAction {
-    let path = request.path.split('?').next().unwrap_or("/").to_owned();
+pub(super) fn handle_request(request: HttpRequest, context: &HttpContext) -> RequestAction {
+    let (path, query) = request
+        .path
+        .split_once('?')
+        .map_or((request.path.clone(), String::new()), |(path, query)| {
+            (path.to_owned(), query.to_owned())
+        });
+    if let Some(rest) = path.strip_prefix("/remote")
+        && (rest == "/streams" || rest.starts_with("/streams/"))
+    {
+        return stream_action(request, rest, context);
+    }
     match (request.method.as_str(), path.as_str()) {
         ("GET", "/.well-known/hex/machine") => RequestAction::Respond(machine()),
         ("POST", "/pair") => RequestAction::RemotePair {
             content_length: request.content_length.unwrap_or(0),
             body_prefix: request.body_prefix,
         },
-        ("POST", "/remote/dictations") => dictation_action(request),
+        ("POST", "/remote/dictations") => dictation_action(request, query == "progress=1"),
         ("GET", "/remote/vocabulary") => match paired_device(&request) {
             Some(_) => RequestAction::Respond(vocabulary(None)),
             None => RequestAction::Respond(HttpResponse::code(401, "not-paired")),
@@ -127,7 +145,51 @@ fn paired_device(request: &HttpRequest) -> Option<crate::remote_pairing::Device>
         .and_then(crate::remote_pairing::device_for_token)
 }
 
-fn dictation_action(request: HttpRequest) -> RequestAction {
+/// The `/streams` routes behind a paired device's token; `path` is past `/remote`.
+fn stream_action(request: HttpRequest, path: &str, context: &HttpContext) -> RequestAction {
+    let Some(device) = paired_device(&request) else {
+        return RequestAction::Respond(HttpResponse::code(401, "not-paired"));
+    };
+    if request.method == "POST" && path == "/streams" {
+        return streams::create_action(request);
+    }
+    let Some((id, action)) = streams::stream_path(path) else {
+        return RequestAction::Respond(HttpResponse::code(404, "not-found"));
+    };
+    let application = request
+        .remote_application
+        .clone()
+        .unwrap_or_else(|| device.label.clone());
+    if request.method != "POST" || action != "finish" {
+        if action == "audio"
+            && let Some(stream) = request.stream_token.as_deref().and_then(|token| {
+                context
+                    .streams
+                    .get(id)
+                    .filter(|stream| stream.owned_by(token))
+            })
+        {
+            super::remote_rewrite::watch(stream, application);
+        }
+        let action = action.to_owned();
+        return streams::route(request, id, &action, context);
+    }
+    let stream = request.stream_token.as_deref().and_then(|token| {
+        context
+            .streams
+            .get(id)
+            .filter(|stream| stream.owned_by(token))
+    });
+    match stream {
+        Some(stream) => RequestAction::RemoteStreamFinish {
+            stream,
+            application,
+        },
+        None => RequestAction::Respond(HttpResponse::code(404, "stream-not-found")),
+    }
+}
+
+fn dictation_action(request: HttpRequest, progress: bool) -> RequestAction {
     let Some(device) = paired_device(&request) else {
         return RequestAction::Respond(HttpResponse::code(401, "not-paired"));
     };
@@ -145,6 +207,7 @@ fn dictation_action(request: HttpRequest) -> RequestAction {
         application,
         content_length,
         body_prefix: request.body_prefix,
+        progress,
     }
 }
 
@@ -200,8 +263,29 @@ pub(super) fn dictate(
     application: String,
     content_length: usize,
     body: Vec<u8>,
+    progress: bool,
     context: &HttpContext,
 ) {
+    if progress {
+        let uploading = std::time::Instant::now();
+        match read_audio(
+            stream,
+            content_length,
+            body,
+            &context.shutdown,
+            DICTATION_UPLOAD_DEADLINE,
+        ) {
+            Ok(clip) => {
+                let upload_ms = uploading.elapsed().as_millis() as u64;
+                super::remote_progress::dictate(stream, clip, upload_ms, application, context);
+            }
+            Err(Some(response)) => {
+                let _ = write_response(stream, response);
+            }
+            Err(None) => {}
+        }
+        return;
+    }
     if let Some(response) =
         transcribe_and_process(stream, application, content_length, body, context)
     {
@@ -230,7 +314,13 @@ fn transcribe_and_process(
     let Some(admission) = context.transcription.admit_audio() else {
         return Some(HttpResponse::code(429, "queue-full"));
     };
-    let clip = match read_audio(stream, content_length, body, &context.shutdown) {
+    let clip = match read_audio(
+        stream,
+        content_length,
+        body,
+        &context.shutdown,
+        DICTATION_UPLOAD_DEADLINE,
+    ) {
         Ok(clip) => clip,
         Err(response) => return response,
     };
@@ -246,15 +336,46 @@ fn transcribe_and_process(
         Ok(raw) => raw,
         Err(response) => return response,
     };
+    let text = process(&raw, application, None);
+    tracing::info!(duration_ms, "remote dictation processed");
+    Some(HttpResponse::json(
+        200,
+        &DictationResponse {
+            text,
+            raw,
+            duration_ms,
+        },
+    ))
+}
 
+/// Runs this machine's Modes on a device's transcript, as if it were dictated
+/// here into `application`.
+/// Runs the Modes on `raw`; `deadline` replaces their OpenCode deadline.
+pub(super) fn process(
+    raw: &str,
+    application: String,
+    deadline: Option<std::time::Duration>,
+) -> String {
+    let mut settings = match crate::app_settings::AppSettings::load() {
+        Ok(settings) => settings,
+        Err(error) => {
+            tracing::error!(error = %format!("{error:#}"), "remote dictation could not read settings");
+            return raw.to_owned();
+        }
+    };
     let processing_context = crate::dictation::context::ContextSnapshot {
         application: Some(application),
         ..crate::dictation::context::ContextSnapshot::default()
     };
+    if let Some(deadline) = deadline {
+        let processing = &mut settings.dictation_processing;
+        for mode in std::iter::once(&mut processing.default_mode).chain(&mut processing.modes) {
+            mode.post_processing.deadline_seconds = deadline.as_secs();
+        }
+    }
     let profiles =
         crate::dictation::config::build_dictation_profiles(&settings.dictation_processing);
-    let processed =
-        profiles.process_cancellable(&raw, &processing_context, &AtomicBool::new(false));
+    let processed = profiles.process_cancellable(raw, &processing_context, &AtomicBool::new(false));
     if let Some(fallback) = processed
         .observation
         .as_ref()
@@ -265,15 +386,7 @@ fn transcribe_and_process(
             "remote dictation post-processing fell back to the transcript"
         );
     }
-    tracing::info!(duration_ms, "remote dictation processed");
-    Some(HttpResponse::json(
-        200,
-        &DictationResponse {
-            text: processed.text,
-            raw,
-            duration_ms,
-        },
-    ))
+    processed.text
 }
 
 fn vocabulary_action(request: HttpRequest, remove: bool) -> RequestAction {

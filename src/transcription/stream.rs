@@ -381,8 +381,13 @@ impl Stream {
         self.owner_token == token
     }
 
-    fn ended(&self) -> bool {
+    pub(crate) fn ended(&self) -> bool {
         self.shared.lock().end.is_some()
+    }
+
+    /// The windows transcribed so far.
+    pub(crate) fn segments(&self) -> Vec<Segment> {
+        self.shared.lock().segments.clone()
     }
 
     /// Queues audio for transcription and renews the lease.
@@ -404,6 +409,16 @@ impl Stream {
         drop(state);
         self.shared.changed.notify_all();
         Ok(())
+    }
+
+    /// Audio received and not yet transcribed, in milliseconds.
+    pub(crate) fn backlog_ms(&self) -> u64 {
+        samples_ms(self.shared.lock().backlog)
+    }
+
+    /// All audio received, in milliseconds.
+    pub(crate) fn received_ms(&self) -> u64 {
+        samples_ms(self.shared.lock().received)
     }
 
     /// Renews the lease; `false` once the stream has ended.

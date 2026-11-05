@@ -42,8 +42,30 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    override func selectionDidChange(_ textInput: UITextInput?) {
+        super.selectionDidChange(textInput)
+        updateSelectedWord()
+    }
+
+    /// A short selection (a name or term, not a sentence) can be added to the word list.
+    private func updateSelectedWord() {
+        let selected = textDocumentProxy.selectedText?
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        let candidate = selected.flatMap { text -> String? in
+            guard !text.isEmpty, text.count <= 64,
+                  text.split(whereSeparator: \.isWhitespace).count <= 4
+            else { return nil }
+            return text
+        }
+        if candidate != viewModel.selectedWord {
+            viewModel.selectedWord = candidate
+            if candidate == nil { viewModel.addedWord = nil }
+        }
+    }
+
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
+        updateSelectedWord()
         updateKeyboardTraits()
         fullKeyboard?.textDidChange()
     }
@@ -52,6 +74,10 @@ final class KeyboardViewController: UIInputViewController {
         view.backgroundColor = .clear
 
         viewModel.inputViewController = self
+        viewModel.onAddWord = { [weak self] word in
+            self?.bridge.queueWord(word)
+            self?.viewModel.addedWord = word
+        }
         viewModel.onDictateTap = { [weak self] in self?.startWarmDictation() }
         viewModel.onStopTap = { [weak self] in self?.stopWarmDictation() }
         viewModel.onCancelTap = { [weak self] in self?.cancelWarmDictation() }
@@ -203,6 +229,14 @@ final class KeyboardViewController: UIInputViewController {
         let quickReturnApps = bridge.quickReturnApps
         if viewModel.quickReturnApps != quickReturnApps {
             viewModel.quickReturnApps = quickReturnApps
+        }
+        let transcriberName = bridge.transcriberName
+        if viewModel.transcriberName != transcriberName {
+            viewModel.transcriberName = transcriberName
+        }
+        let transcriptionStatus = snap.state == .transcribing ? bridge.transcriptionStatus : nil
+        if viewModel.transcriptionStatus != transcriptionStatus {
+            viewModel.transcriptionStatus = transcriptionStatus
         }
 
         viewModel.applyBridgeState(

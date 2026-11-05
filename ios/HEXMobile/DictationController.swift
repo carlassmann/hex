@@ -12,7 +12,8 @@ final class DictationController {
     )
 
     private static let minCaptureDuration: TimeInterval = 0.30
-    private static let maxCaptureDuration: TimeInterval = 60.0
+    /// Long enough to just keep talking; the paired Hex transcribes while it records.
+    private static let maxCaptureDuration: TimeInterval = 30 * 60
     private static let resultDeliveryTTL: TimeInterval = 30.0
 
     enum Phase: Equatable {
@@ -88,6 +89,8 @@ final class DictationController {
     private(set) var phase = Phase.modelRequired
     private(set) var isModelReady = false
     private(set) var transcript = ""
+    /// The last recording no machine transcribed; Try again sends it again.
+    private(set) var unsentRecording = UnsentRecordings.latest()
     @ObservationIgnored private(set) var audioLevel: Float = 0
     @ObservationIgnored private(set) var loudnessDB: Float = -120
     @ObservationIgnored private var rawRecordingDuration: TimeInterval = 0
@@ -103,6 +106,7 @@ final class DictationController {
         }
     }
     private(set) var copied = false
+    let transcriptionTracker: TranscriptionProgressTracker
     private(set) var keyboardSessionEnabled = false
     @ObservationIgnored private var rawKeyboardSessionRemaining: TimeInterval = 0
     private(set) var keyboardSessionDisplayRemaining = "0:00"
@@ -122,6 +126,8 @@ final class DictationController {
     private(set) var style: DictationStyle
     private(set) var returnAppID: String?
     private(set) var quickReturnApps: [HostApp]
+    private(set) var pairedHex: PairedHex?
+    let wordList: RemoteWordList
     private(set) var allowBluetoothMic: Bool
     private(set) var autoReturnState: AutoReturnState = .idle
     private(set) var handoffNotice: String?
@@ -149,13 +155,18 @@ final class DictationController {
         self.audio = resolvedAudio
         self.keyboardBridge = resolvedBridge
         self.transcriber = initialTranscriber
-        self.transcriberFactory = transcriberFactory ?? Self.defaultTranscriber
+        self.transcriberFactory = transcriberFactory ?? {
+            await Self.defaultTranscriber(paired: PairedHexStore.load())
+        }
         self.fileManager = fileManager
         self.now = now
         self.warmDuration = resolvedBridge.warmDuration
         self.style = resolvedBridge.style
         self.returnAppID = resolvedBridge.returnAppID
         self.quickReturnApps = resolvedBridge.quickReturnApps
+        self.pairedHex = PairedHexStore.load()?.hex
+        self.wordList = RemoteWordList(keyboardBridge: resolvedBridge)
+        self.transcriptionTracker = TranscriptionProgressTracker(keyboardBridge: resolvedBridge)
         self.allowBluetoothMic = resolvedBridge.allowBluetoothMic
         self.defaultURLOpener = urlOpener ?? { url in
             await UIApplication.shared.open(url)
@@ -173,7 +184,10 @@ final class DictationController {
         }
 
         if autoPrepareOnInit {
-            if hasCachedModel {
+            if pairedHex != nil {
+                // The paired Hex transcribes; no on-device model loads until a fallback needs it.
+                prepareModel()
+            } else if hasCachedModel {
                 engineName = "Parakeet V2"
                 prepareModel()
             } else if #available(iOS 26.0, *), AppleSpeechTranscriber.isAvailable {
@@ -229,6 +243,11 @@ final class DictationController {
         return note
     }
 
+    /// "cshed · transcribing · 0:12", or nil when not transcribing.
+    var transcriptionStatus: String? {
+        phase == .transcribing ? transcriptionTracker.statusLine(machine: engineName) : nil
+    }
+
     // MARK: - Settings
 
     func setWarmDuration(_ duration: WarmSessionDuration) {
@@ -269,6 +288,26 @@ final class DictationController {
         keyboardBridge.returnAppID = normalized
     }
 
+    /// Pairs with a desktop Hex (`hex remote pair` there), which then transcribes for this iPhone.
+    func pairWithHex(address: String, code: String) async throws {
+        pairedHex = try await RemoteHexPairing.pair(address: address, code: code)
+        reloadTranscriberIfIdle()
+        await wordList.sync()
+    }
+
+    func unpairHex() {
+        PairedHexStore.forget()
+        pairedHex = nil
+        wordList.clear()
+        reloadTranscriberIfIdle()
+    }
+
+    private func reloadTranscriberIfIdle() {
+        if phase == .ready || isFailedPhase {
+            prepareModel()
+        }
+    }
+
     /// Unticking the saved return app also forgets it, so the ↩ chip only ever names an app in the list.
     func setQuickReturnApps(_ apps: [HostApp]) {
         quickReturnApps = apps
@@ -291,6 +330,8 @@ final class DictationController {
 
     func performPrimaryAction() {
         switch phase {
+        case .failed where unsentRecording != nil:
+            retryUnsentRecording()
         case .modelRequired, .failed:
             prepareModel()
         case .ready:
@@ -306,6 +347,8 @@ final class DictationController {
         jobGeneration &+= 1
         transcriptionTask?.cancel()
         transcriptionTask = nil
+        transcriptionTracker.end()
+        Task { [transcriber] in await transcriber.recordingCancelled() }
         liveActivity.endImmediately()
 
         if let session = activeCapture {
@@ -665,6 +708,7 @@ final class DictationController {
                 self.transcriber = candidate
                 self.transcriptionLanguage = await candidate.languageName
                 self.keyboardBridge.setModelInstalled(true)
+                self.keyboardBridge.transcriberName = (candidate as? RemoteTranscriber)?.displayName
                 self.isModelReady = true
                 self.phase = .ready
                 self.publishKeyboardSnapshot()
@@ -681,7 +725,13 @@ final class DictationController {
         }
     }
 
-    private static func defaultTranscriber() async -> any LocalTranscribing {
+    private static func defaultTranscriber(paired: (hex: PairedHex, token: String)?) async -> any LocalTranscribing {
+        let onDevice = await onDeviceTranscriber()
+        guard let paired else { return onDevice }
+        return RemoteTranscriber(hex: paired.hex, token: paired.token, fallback: onDevice)
+    }
+
+    private static func onDeviceTranscriber() async -> any LocalTranscribing {
         if #available(iOS 26.0, *),
            AppleSpeechTranscriber.isAvailable,
            let locale = await AppleSpeechTranscriber.preferredLocale() {
@@ -760,6 +810,7 @@ final class DictationController {
                 loudnessDB = -120
                 recordingDuration = 0
                 phase = .recording
+                Task { [transcriber] in await transcriber.recordingStarted(captureURL) }
                 liveActivity.startRecording(startedAt: Date(timeIntervalSince1970: startedAt))
                 startMetering(for: captureGeneration)
                 publishKeyboardSnapshot()
@@ -799,6 +850,7 @@ final class DictationController {
 
         guard finalDuration >= Self.minCaptureDuration else {
             try? fileManager.removeItem(at: captureURL)
+            Task { [transcriber] in await transcriber.recordingCancelled() }
             recordingDuration = 0
             activeKeyboardJobID = nil
             keyboardMessage = nil
@@ -808,27 +860,72 @@ final class DictationController {
             return
         }
 
+        transcribe(
+            captureURL,
+            generation: captureGeneration,
+            keyboardJobID: keyboardJobID,
+            startedAt: session.startedAt,
+            style: session.style,
+            copyToPasteboard: session.copyToPasteboard
+        )
+    }
+
+    /// Transcribes the recording kept when the last one failed.
+    func retryUnsentRecording() {
+        guard let recording = unsentRecording else { return }
+        jobGeneration &+= 1
+        transcribe(recording, generation: jobGeneration, keyboardJobID: nil, startedAt: now(), style: style, copyToPasteboard: false)
+    }
+
+    /// A recording leaves the phone only as text: until then it stays, in Unsent recordings
+    /// when this attempt fails or is superseded.
+    private func transcribe(
+        _ captureURL: URL,
+        generation captureGeneration: UInt64,
+        keyboardJobID: String?,
+        startedAt: TimeInterval,
+        style: DictationStyle,
+        copyToPasteboard: Bool
+    ) {
         phase = .transcribing
-        liveActivity.markTranscribing(startedAt: Date(timeIntervalSince1970: session.startedAt))
+        transcriptionTracker.begin(machine: engineName) { [weak self] in
+            self?.jobGeneration == captureGeneration && self?.phase == .transcribing
+        }
+        liveActivity.markTranscribing(startedAt: Date(timeIntervalSince1970: startedAt))
         publishKeyboardSnapshot()
 
         let activeTranscriber = transcriber
+        // Keeps the request to the paired Hex alive once the app is in the background, mic released.
+        let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Hex transcription")
+        let tracker = transcriptionTracker, liveActivity = liveActivity
+        let reportProgress: @Sendable (TranscriptionProgress) -> Void = { progress in
+            Task { @MainActor in tracker.update(progress).map(liveActivity.updateTranscribing) }
+        }
 
         transcriptionTask?.cancel()
         transcriptionTask = Task { [weak self] in
+            var delivered = false
             defer {
-                try? FileManager.default.removeItem(at: captureURL)
+                if delivered {
+                    try? FileManager.default.removeItem(at: captureURL)
+                } else {
+                    self?.unsentRecording = UnsentRecordings.keep(captureURL) ?? UnsentRecordings.latest()
+                }
+                if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask) }
             }
 
             do {
-                let rawText = try await activeTranscriber.transcribe(captureURL)
+                let rawText = try await activeTranscriber.transcribe(captureURL, progress: reportProgress)
                 guard let self, self.jobGeneration == captureGeneration, !Task.isCancelled else {
                     return
                 }
-                let formatted = TranscriptFormatter.format(rawText, style: session.style)
+                delivered = true
+                self.unsentRecording = nil
+                self.transcriptionTracker.end()
+                let formatted = TranscriptFormatter.format(rawText, style: style)
                 self.recordingDuration = 0
                 self.transcript = formatted
-                if session.copyToPasteboard && !formatted.isEmpty {
+                if copyToPasteboard && !formatted.isEmpty {
                     UIPasteboard.general.string = formatted
                     self.copied = true
                     self.liveActivity.finishCopied()
@@ -850,11 +947,13 @@ final class DictationController {
                 guard !Task.isCancelled, let self, self.jobGeneration == captureGeneration else {
                     return
                 }
+                let message = "\(error.localizedDescription) Recording kept on this iPhone."
+                self.transcriptionTracker.end()
                 self.recordingDuration = 0
                 self.activeKeyboardJobID = nil
                 self.liveActivity.endImmediately()
-                self.keyboardMessage = keyboardJobID == nil ? nil : error.localizedDescription
-                self.phase = .failed(error.localizedDescription)
+                self.keyboardMessage = keyboardJobID == nil ? nil : message
+                self.phase = .failed(message)
                 self.publishKeyboardSnapshot()
             }
         }
@@ -962,6 +1061,9 @@ final class DictationController {
                 self.consumeKeyboardCommand()
                 if self.phase != .recording {
                     self.publishKeyboardSnapshot(minInterval: 0.60)
+                }
+                if !self.keyboardBridge.pendingWords.isEmpty {
+                    Task { await self.wordList.sync() }
                 }
                 try? await Task.sleep(for: .milliseconds(100))
             }
@@ -1222,7 +1324,7 @@ final class DictationController {
         }
     }
 
-    /// A failed dictation leaves the warm microphone
+    /// A failed dictation (say, the paired Hex was unreachable) leaves the warm microphone
     /// running, so the keyboard can start the next one without opening the app.
     private var canRecordAfterFailure: Bool {
         isFailedPhase && isModelReady && keyboardSessionEnabled && audio.isKeepaliveRunning
@@ -1365,105 +1467,21 @@ final class DictationController {
             controller.keyboardSessionRemaining = 14 * 60 + 42
             controller.keyboardSessionExpiresAt = Date().timeIntervalSince1970 + 14 * 60 + 42
             controller.setReturnAppID("messages")
-            Task { @MainActor in
-                while !Task.isCancelled {
-                    let t = Date().timeIntervalSince1970
-                    controller.keyboardBridge.publish(
-                        KeyboardSnapshot(
-                            state: .ready,
-                            heartbeat: t,
-                            expiresAt: t + 14 * 60 + 42
-                        )
-                    )
-                    try? await Task.sleep(for: .milliseconds(250))
-                }
-            }
+            HostedKeyboardFixture.publishReady(to: controller.keyboardBridge)
 
         case "hosted-keyboard-recording", "hosted-keyboard-light":
             controller.phase = .ready
             controller.warmDuration = .fifteenMinutes
             controller.keyboardSessionEnabled = true
             controller.keyboardSessionRemaining = 14 * 60 + 55
-            let startWall = Date().timeIntervalSince1970 - 4.0
-            Task { @MainActor in
-                var simTime: Float = 0.4
-                while !Task.isCancelled {
-                    let t = Date().timeIntervalSince1970
-                    let db = -28.5 + 5.2 * sin(simTime * 19.0) + 2.4 * cos(simTime * 7.3)
-                    controller.keyboardBridge.publish(
-                        KeyboardSnapshot(
-                            state: .recording,
-                            heartbeat: t,
-                            expiresAt: t + 15 * 60,
-                            recordingStartedAt: startWall,
-                            audioLevel: 0.78,
-                            loudnessDB: db,
-                            jobID: "hosted-demo-job"
-                        )
-                    )
-                    simTime += 0.033
-                    try? await Task.sleep(for: .milliseconds(33))
-                }
-            }
+            HostedKeyboardFixture.publishRecording(to: controller.keyboardBridge)
 
         case "hosted-keyboard-tour":
             controller.phase = .ready
             controller.warmDuration = .fifteenMinutes
             controller.keyboardSessionEnabled = true
             controller.keyboardSessionRemaining = 14 * 60 + 58
-            Task { @MainActor in
-                let boot = Date().timeIntervalSince1970
-                let freshResultID = "hosted-tour-\(UUID().uuidString)"
-                var simTime: Float = 0.0
-                while !Task.isCancelled {
-                    let t = Date().timeIntervalSince1970
-                    let elapsed = t - boot
-                    if elapsed < 2.5 {
-                        controller.keyboardBridge.publish(
-                            KeyboardSnapshot(
-                                state: .ready,
-                                heartbeat: t,
-                                expiresAt: t + 15 * 60
-                            )
-                        )
-                    } else if elapsed < 5.2 {
-                        let db = DotScopeSimulation.demoLoudness(at: simTime) + 4.5
-                        controller.keyboardBridge.publish(
-                            KeyboardSnapshot(
-                                state: .recording,
-                                heartbeat: t,
-                                expiresAt: t + 15 * 60,
-                                recordingStartedAt: boot + 2.5,
-                                audioLevel: 0.78,
-                                loudnessDB: db,
-                                jobID: "hosted-tour-job"
-                            )
-                        )
-                        simTime += 0.033
-                    } else if elapsed < 6.4 {
-                        controller.keyboardBridge.publish(
-                            KeyboardSnapshot(
-                                state: .transcribing,
-                                heartbeat: t,
-                                expiresAt: t + 15 * 60,
-                                jobID: "hosted-tour-job"
-                            )
-                        )
-                    } else {
-                        controller.keyboardBridge.publish(
-                            KeyboardSnapshot(
-                                state: .ready,
-                                heartbeat: t,
-                                expiresAt: t + 14 * 60 + 54,
-                                resultID: freshResultID,
-                                resultExpiresAt: boot + 30,
-                                transcript: "See you at ten."
-                            )
-                        )
-                    }
-                    try? await Task.sleep(for: .milliseconds(33))
-                }
-            }
+            HostedKeyboardFixture.playTour(to: controller.keyboardBridge)
 
         default:
             return false

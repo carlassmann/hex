@@ -15,6 +15,47 @@ protocol LocalTranscribing: Actor {
     ) async throws
 
     func transcribe(_ audioURL: URL) async throws -> String
+
+    /// A recording to `audioURL` began; a remote transcriber starts sending it.
+    func recordingStarted(_ audioURL: URL) async
+    /// The recording was thrown away.
+    func recordingCancelled() async
+    /// Transcribes the finished recording, reporting where it is meanwhile.
+    func transcribe(
+        _ audioURL: URL,
+        progress: @escaping @Sendable (TranscriptionProgress) -> Void
+    ) async throws -> String
+}
+
+/// Where a dictation's text is at, for the app, keyboard, and Live Activity.
+struct TranscriptionProgress: Sendable, Equatable {
+    enum Stage: Sendable, Equatable {
+        case uploading
+        case transcribing
+        /// Running the paired Hex's Modes (such as an OpenCode rewrite).
+        case rewriting
+    }
+
+    /// The paired Hex's name, or "iPhone".
+    let machine: String
+    let stage: Stage
+    /// Recorded audio the machine has not transcribed yet.
+    var audioLeftMs: Int = 0
+    /// Why this iPhone took over from the paired Hex.
+    var fallbackReason: String?
+}
+
+extension LocalTranscribing {
+    func recordingStarted(_ audioURL: URL) async {}
+    func recordingCancelled() async {}
+
+    func transcribe(
+        _ audioURL: URL,
+        progress: @escaping @Sendable (TranscriptionProgress) -> Void
+    ) async throws -> String {
+        progress(TranscriptionProgress(machine: "iPhone", stage: .transcribing))
+        return try await transcribe(audioURL)
+    }
 }
 
 actor ParakeetTranscriber: LocalTranscribing {

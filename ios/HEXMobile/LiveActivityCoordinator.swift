@@ -4,6 +4,7 @@ import Foundation
 @MainActor
 final class LiveActivityCoordinator {
     private var currentActivityID: String?
+    private var transcribingStartedAt: Date?
 
     func startRecording(startedAt: Date) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
@@ -30,14 +31,20 @@ final class LiveActivityCoordinator {
     }
 
     func markTranscribing(startedAt: Date) {
-        guard let id = currentActivityID else { return }
+        transcribingStartedAt = startedAt
+        updateTranscribing(subtitle: "Transcribing…")
+    }
+
+    /// Says where a transcription is at, such as "Rewriting on cshed…".
+    func updateTranscribing(subtitle: String) {
+        guard let id = currentActivityID, let startedAt = transcribingStartedAt else { return }
         let state = HexDictationActivityAttributes.ContentState(
             stage: .transcribing,
             startedAt: startedAt,
-            subtitle: "Transcribing locally…"
+            subtitle: subtitle
         )
         Task.detached {
-            await Self.updateActivity(id: id, state: state, staleDate: Date().addingTimeInterval(30))
+            await Self.updateActivity(id: id, state: state, staleDate: Date().addingTimeInterval(60))
         }
     }
 

@@ -41,6 +41,7 @@ targets:
             CFBundleURLName: com.carlassmann.hex.mobile.keyboard-session
             CFBundleURLSchemes:
               - hex-dictation
+        NSCameraUsageDescription: Hex uses the camera only to scan the pairing code another Hex shows.
         NSMicrophoneUsageDescription: Hex records only while you dictate and transcribes locally on this iPhone.
         NSSpeechRecognitionUsageDescription: Hex uses Apple's on-device SpeechTranscriber to turn your recording into text.
         NSSupportsLiveActivities: true

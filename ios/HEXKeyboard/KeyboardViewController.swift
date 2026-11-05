@@ -76,6 +76,10 @@ final class KeyboardViewController: UIInputViewController {
         viewModel.onReturn = { [weak self] in self?.textDocumentProxy.insertText("\n") }
         viewModel.onOpenURL = { [weak self] url in
             guard let self else { return }
+            if url == self.viewModel.coldStartURL {
+                let now = Date().timeIntervalSince1970
+                self.bridge.recordColdOpen(self.bridge.snapshot().unavailableReason(at: now), at: now)
+            }
             ContainingAppOpener.open(url, from: self)
         }
 

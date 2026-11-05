@@ -282,6 +282,18 @@ nonisolated struct KeyboardSnapshot: Codable, Equatable, Sendable {
         return expiresAt > now
     }
 
+    /// Why `isAvailable(at:)` is false, for the keyboard's diagnostics.
+    func unavailableReason(at now: TimeInterval) -> String {
+        if heartbeat <= 0 {
+            return state == .failed ? "the last dictation failed and the microphone was off" : "the app wasn't warm (\(state.rawValue))"
+        }
+        let age = Int(now - heartbeat)
+        if age >= 3 {
+            return "the app last answered \(age) s earlier (\(state.rawValue)); iOS had stopped or closed it"
+        }
+        return "the warm session had expired \(Int(now - expiresAt)) s earlier"
+    }
+
     /// Accepted jobs keep their completed transcript deliverable even after a one-shot or expiring session closes.
     func hasDeliverableResult(at now: TimeInterval = Date().timeIntervalSince1970) -> Bool {
         guard let resultID, !resultID.isEmpty,
@@ -315,6 +327,8 @@ struct KeyboardBridge {
         static let allowBluetoothMic = "settings.allowBluetoothMic"
         static let lastInsertedResultID = "keyboard.lastInsertedResultID"
         static let fullAccessSeenAt = "keyboard.fullAccessSeenAt"
+        static let warmEnd = "diagnostics.warmEnd"
+        static let coldOpen = "diagnostics.coldOpen"
     }
 
     private let defaults: UserDefaults?
@@ -443,6 +457,26 @@ struct KeyboardBridge {
                 defaults?.removeObject(forKey: Key.fullAccessSeenAt)
             }
         }
+    }
+
+    /// A diagnostic: when and why the app last ended the warm session.
+    func recordWarmEnd(_ why: String, at time: TimeInterval) {
+        defaults?.set(["at": time, "why": why] as [String: Any], forKey: Key.warmEnd)
+    }
+
+    /// A diagnostic: when the keyboard last opened the app instead of dictating, and why.
+    func recordColdOpen(_ why: String, at time: TimeInterval) {
+        defaults?.set(["at": time, "why": why] as [String: Any], forKey: Key.coldOpen)
+    }
+
+    var lastWarmEnd: (at: TimeInterval, why: String)? { record(Key.warmEnd) }
+    var lastColdOpen: (at: TimeInterval, why: String)? { record(Key.coldOpen) }
+
+    private func record(_ key: String) -> (at: TimeInterval, why: String)? {
+        guard let entry = defaults?.dictionary(forKey: key),
+              let at = entry["at"] as? TimeInterval,
+              let why = entry["why"] as? String else { return nil }
+        return (at, why)
     }
 
     func publish(_ snapshot: KeyboardSnapshot) {

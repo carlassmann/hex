@@ -837,7 +837,7 @@ struct KeyboardSurfaceView: View {
     private func handleIdleStageTap() {
         if !model.hasFullAccess {
             model.onOpenURL?(KeyboardLaunchRequest.setup.url)
-        } else if !model.isWarmAvailable || model.stagePhase == .failed {
+        } else if !model.isWarmAvailable {
             model.onOpenURL?(model.coldStartURL)
         } else {
             model.onDictateTap?()

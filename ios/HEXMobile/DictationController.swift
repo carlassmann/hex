@@ -227,6 +227,20 @@ final class DictationController {
         }
     }
 
+    /// Why the keyboard last opened this app instead of dictating, and why the warm
+    /// session before it ended; nil until the keyboard has done that once.
+    var keyboardColdOpenNote: String? {
+        guard let cold = keyboardBridge.lastColdOpen else { return nil }
+        let time = { (at: TimeInterval) in
+            Date(timeIntervalSince1970: at).formatted(date: .omitted, time: .standard)
+        }
+        var note = "Keyboard opened Hex at \(time(cold.at)): \(cold.why)."
+        if let end = keyboardBridge.lastWarmEnd, end.at <= cold.at {
+            note += " Warm session last ended at \(time(end.at)): \(end.why)."
+        }
+        return note
+    }
+
     // MARK: - Settings
 
     func setWarmDuration(_ duration: WarmSessionDuration) {
@@ -349,7 +363,9 @@ final class DictationController {
         }
     }
 
-    func endWarmSession(message: String? = nil) {
+    /// `why` is kept for the keyboard's diagnostics ("Why the keyboard opened the app").
+    func endWarmSession(message: String? = nil, why: String = "you ended it") {
+        keyboardBridge.recordWarmEnd(why, at: now())
         keyboardSessionTask?.cancel()
         keyboardSessionTask = nil
         pendingHandoff = nil
@@ -784,7 +800,12 @@ final class DictationController {
 
         stopMetering()
         let finalDuration = max(recordingDuration, session.capture.currentTime)
+        // A warm microphone starts before the recorder stops (see `beginCapture`); one that
+        // turns off waits for it.
+        let staysWarm = keyboardSessionEnabled && warmDuration.seconds != nil && keyboardSessionExpiresAt > now()
+        if staysWarm { restoreAudioAfterCapture() }
         session.capture.stop()
+        if !staysWarm { restoreAudioAfterCapture() }
         audioLevel = 0
         loudnessDB = -120
 
@@ -799,14 +820,12 @@ final class DictationController {
             keyboardMessage = nil
             phase = .ready
             liveActivity.endImmediately()
-            restoreAudioAfterCapture()
             publishKeyboardSnapshot()
             return
         }
 
         phase = .transcribing
         liveActivity.markTranscribing(startedAt: Date(timeIntervalSince1970: session.startedAt))
-        restoreAudioAfterCapture()
         publishKeyboardSnapshot()
 
         let activeTranscriber = transcriber
@@ -890,6 +909,7 @@ final class DictationController {
         if keyboardSessionEnabled, let seconds = warmDuration.seconds, seconds > 0 {
             let remaining = keyboardSessionExpiresAt - now()
             if remaining <= 0 {
+                keyboardBridge.recordWarmEnd("the \(warmDuration.title) were up during a dictation", at: now())
                 keyboardSessionEnabled = false
                 keyboardSessionRemaining = 0
                 keyboardSessionExpiresAt = 0
@@ -899,6 +919,7 @@ final class DictationController {
             do {
                 try audio.startKeepalive(allowBluetooth: allowBluetoothMic)
             } catch {
+                keyboardBridge.recordWarmEnd("the microphone wouldn't restart after a dictation: \(error.localizedDescription)", at: now())
                 keyboardSessionEnabled = false
                 keyboardSessionRemaining = 0
                 keyboardSessionExpiresAt = 0
@@ -906,6 +927,9 @@ final class DictationController {
                 audio.deactivateSession()
             }
         } else {
+            if keyboardSessionEnabled {
+                keyboardBridge.recordWarmEnd("Keep mic warm is One shot", at: now())
+            }
             keyboardSessionEnabled = false
             keyboardSessionRemaining = 0
             keyboardSessionExpiresAt = 0
@@ -964,7 +988,7 @@ final class DictationController {
                 if self.phase != .recording && self.phase != .transcribing {
                     let remaining = self.keyboardSessionExpiresAt - self.now()
                     if remaining <= 0 {
-                        self.endWarmSession()
+                        self.endWarmSession(why: "the \(self.warmDuration.title) were up")
                         return
                     }
                     self.keyboardSessionRemaining = remaining
@@ -974,7 +998,7 @@ final class DictationController {
                         do {
                             try self.audio.startKeepalive(allowBluetooth: self.allowBluetoothMic)
                         } catch {
-                            self.endWarmSession()
+                            self.endWarmSession(why: "the microphone stopped and wouldn't restart: \(error.localizedDescription)")
                             return
                         }
                     }
@@ -1008,7 +1032,7 @@ final class DictationController {
 
         switch command.kind {
         case .start:
-            guard phase == .ready, activeKeyboardJobID == nil else { return }
+            guard phase == .ready || canRecordAfterFailure, activeKeyboardJobID == nil else { return }
             setStyle(command.style)
             startRecording(
                 keyboardJobID: command.jobID,
@@ -1119,6 +1143,9 @@ final class DictationController {
     func handleAudioSystemEvent(_ event: AudioSystemEvent) {
         switch event {
         case .interruptionBegan:
+            if keyboardSessionEnabled {
+                keyboardBridge.recordWarmEnd("another app's audio or a call took the microphone (paused, not ended)", at: now())
+            }
             suspendedWarmSessionOnInterruption = keyboardSessionEnabled
             if phase == .recording {
                 // Save spoken audio if >= 300ms; otherwise cancel cleanly so "Listening" never sticks during a call.
@@ -1138,7 +1165,7 @@ final class DictationController {
             guard suspendedWarmSessionOnInterruption else { return }
             suspendedWarmSessionOnInterruption = false
             guard keyboardSessionEnabled, keyboardSessionExpiresAt > now() else {
-                endWarmSession()
+                endWarmSession(why: "it expired during an audio interruption")
                 return
             }
             if shouldResume || UIApplication.shared.applicationState == .active {
@@ -1146,10 +1173,10 @@ final class DictationController {
                     try audio.startKeepalive(allowBluetooth: allowBluetoothMic)
                     publishKeyboardSnapshot()
                 } catch {
-                    endWarmSession()
+                    endWarmSession(why: "the microphone wouldn't restart after an interruption: \(error.localizedDescription)")
                 }
             } else {
-                endWarmSession()
+                endWarmSession(why: "another app's audio or a call interrupted it, and iOS didn't hand the microphone back")
             }
 
         case .routeOldDeviceUnavailable:
@@ -1165,7 +1192,7 @@ final class DictationController {
                     try audio.startKeepalive(allowBluetooth: allowBluetoothMic)
                     publishKeyboardSnapshot()
                 } catch {
-                    endWarmSession()
+                    endWarmSession(why: "the microphone wouldn't restart after a device change: \(error.localizedDescription)")
                 }
             }
 
@@ -1184,7 +1211,7 @@ final class DictationController {
                     try audio.startKeepalive(allowBluetooth: allowBluetoothMic)
                     publishKeyboardSnapshot()
                 } catch {
-                    endWarmSession()
+                    endWarmSession(why: "iOS reset its audio and the microphone wouldn't restart: \(error.localizedDescription)")
                 }
             }
         }
@@ -1238,6 +1265,12 @@ final class DictationController {
             }
             return nil
         }
+    }
+
+    /// A failed dictation leaves the warm microphone
+    /// running, so the keyboard can start the next one without opening the app.
+    private var canRecordAfterFailure: Bool {
+        isFailedPhase && isModelReady && keyboardSessionEnabled && audio.isKeepaliveRunning
     }
 
     private var isFailedPhase: Bool {

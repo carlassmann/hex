@@ -428,6 +428,16 @@ struct ContentView: View {
             .padding(.horizontal, 16)
             .frame(minHeight: 50)
 
+            if let note = dictation.keyboardColdOpenNote {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+                    .textSelection(.enabled)
+            }
+
             rowDivider
 
             HStack(spacing: 12) {

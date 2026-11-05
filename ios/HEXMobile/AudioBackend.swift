@@ -123,6 +123,7 @@ final class SystemAudioManager: AudioManaging {
         }
     }
 
+    /// Called while a capture still records, so the microphone never goes quiet in between.
     func startKeepalive(allowBluetooth: Bool) throws {
         stopKeepalive()
         try configureAudioSession(allowBluetooth: allowBluetooth)
@@ -168,7 +169,8 @@ final class SystemAudioManager: AudioManaging {
         maxDuration: TimeInterval,
         allowBluetooth: Bool
     ) throws -> any ActiveAudioCapture {
-        stopKeepalive()
+        // The keepalive stops only once the recorder runs: iOS won't let a background app
+        // start the microphone again after it has gone quiet, even for a moment.
         try configureAudioSession(allowBluetooth: allowBluetooth)
 
         let settings: [String: Any] = [
@@ -185,6 +187,7 @@ final class SystemAudioManager: AudioManaging {
         guard recorder.record(forDuration: maxDuration) else {
             throw CocoaError(.fileWriteUnknown)
         }
+        stopKeepalive()
 
         return RecorderCaptureAdapter(url: url, recorder: recorder) { [weak self] finishedURL, ok in
             self?.onUnexpectedCaptureEnd?(finishedURL, ok)

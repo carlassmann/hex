@@ -54,8 +54,10 @@
 	<false/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>Hex uses the camera only to scan the pairing code another Hex shows.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Hex turns what you say into text on this iPhone. Audio never leaves it and is deleted once it's transcribed.</string>
+	<string>Hex turns what you say into text on this iPhone. Audio is deleted once it's transcribed, here or on the Hex you paired.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Hex uses Apple's on-device speech recognition to turn what you say into text. Nothing you say is sent to a server.</string>
 	<key>NSSupportsLiveActivities</key>

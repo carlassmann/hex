@@ -77,6 +77,7 @@ extension DictationController {
                 self.transcriptionLanguage = await candidate.languageName
                 self.transcriptionLanguageID = await candidate.languageIdentifier
                 self.keyboardBridge.setModelInstalled(true)
+                self.keyboardBridge.transcriberName = (candidate as? RemoteTranscriber)?.displayName
                 self.isModelReady = true
                 self.transition(model: .ready)
                 if self.preparingMultilingualParakeet {
@@ -221,6 +222,7 @@ extension DictationController {
                 self.languageOffer = nil
                 self.isModelReady = true
                 self.keyboardBridge.setModelInstalled(true)
+                self.keyboardBridge.transcriberName = nil
                 self.transition(model: .ready)
                 self.multilingualParakeetLoaded()
                 self.publishKeyboardSnapshot()

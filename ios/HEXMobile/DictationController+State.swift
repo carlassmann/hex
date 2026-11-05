@@ -105,10 +105,21 @@ extension DictationController {
     }
 
     @MainActor
+    /// What a capture's transcription needs once it stops: everything but the recorder,
+    /// so a recording kept unsent can be transcribed again (`retryUnsentRecording`).
+    @dynamicMemberLookup
     struct ActiveCaptureSession {
-        let generation: UInt64
         let capture: any ActiveAudioCapture
-        let startedAt: TimeInterval
+        let job: DictationJob
+
+        subscript<T>(dynamicMember keyPath: KeyPath<DictationJob, T>) -> T {
+            job[keyPath: keyPath]
+        }
+    }
+
+    struct DictationJob {
+        let generation: UInt64
+        var startedAt: TimeInterval
         let keyboardJobID: String?
         let preferences: DictationPipeline.Preferences
         let usesCleanup: Bool

@@ -68,8 +68,9 @@ targets:
                 - hexwords
               public.mime-type:
                 - application/vnd.anomaly.hex-words+json
-        NSMicrophoneUsageDescription: Hex turns what you say into text on this iPhone. Audio never leaves it and is deleted once it's transcribed.
+        NSMicrophoneUsageDescription: Hex turns what you say into text on this iPhone. Audio is deleted once it's transcribed, here or on the Hex you paired.
         NSSpeechRecognitionUsageDescription: Hex uses Apple's on-device speech recognition to turn what you say into text. Nothing you say is sent to a server.
+        NSCameraUsageDescription: Hex uses the camera only to scan the pairing code another Hex shows.
         NSSupportsLiveActivities: true
         ITSAppUsesNonExemptEncryption: false
         UIBackgroundModes:
@@ -119,7 +120,7 @@ targets:
       path: HEXKeyboard/Info.plist
       properties:
         CFBundleDisplayName: Hex Keyboard
-        NSMicrophoneUsageDescription: Hex turns what you say into text on this iPhone. Audio never leaves it and is deleted once it's transcribed.
+        NSMicrophoneUsageDescription: Hex turns what you say into text on this iPhone, or on your own Hex once you pair one. Audio is deleted once it's transcribed.
         NSSpeechRecognitionUsageDescription: Hex uses Apple's on-device speech recognition to turn what you say into text. Nothing you say is sent to a server.
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)

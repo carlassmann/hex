@@ -337,9 +337,26 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    /// A short selection (a name or term, not a sentence) can be added to the word list.
+    private func updateSelectedWord() {
+        let selected = textDocumentProxy.selectedText?
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        let candidate = selected.flatMap { text -> String? in
+            guard !text.isEmpty, text.count <= 64,
+                  text.split(whereSeparator: \.isWhitespace).count <= 4
+            else { return nil }
+            return text
+        }
+        if candidate != viewModel.selectedWord {
+            viewModel.selectedWord = candidate
+            if candidate == nil { viewModel.addedWord = nil }
+        }
+    }
+
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
         if isShown || isRetired { Self.onScreen.moved(keyboardID, to: currentDocument) }
+        updateSelectedWord()
         updateKeyboardTraits()
         followTypingLogField()
         fullKeyboard?.textDidChange()
@@ -348,10 +365,11 @@ final class KeyboardViewController: UIInputViewController {
         noteHostTextChange()
     }
 
-    /// The cursor moved or a selection changed: a Hangul run that is no longer right before
-    /// the cursor commits, as its text is already in the field.
+    /// The cursor moved or a selection changed: the selected word updates, and a Hangul run
+    /// no longer right before the cursor commits, as its text is already in the field.
     override func selectionDidChange(_ textInput: UITextInput?) {
         super.selectionDidChange(textInput)
+        updateSelectedWord()
         fullKeyboard?.engine.commitHangulIfHostMoved()
     }
 
@@ -667,6 +685,10 @@ final class KeyboardViewController: UIInputViewController {
         liveTyping.willSend = { [weak self] in self?.localDictation.holdForSend() }
         liveTyping.didSettleSend = { [weak self] sent in self?.liveWordsSent(sent) }
         viewModel.onPasteDictation = { [weak self] in self?.pasteOfferedDictation() }
+        viewModel.onAddWord = { [weak self] word in
+            self?.bridge.queueWord(word)
+            self?.viewModel.addedWord = word
+        }
         viewModel.onDictateTap = { [weak self] in self?.startWarmDictation() }
         viewModel.onHexKeyPress = { [weak self] at in self?.hexKeyPressed(at: at) }
         viewModel.onHexKeyAbandon = { [weak self] in self?.localDictation.discard() }
@@ -968,6 +990,14 @@ final class KeyboardViewController: UIInputViewController {
         refreshOfferedDictation(app: appSnapshot, now: now)
 
         syncLanguageState()
+        let transcriberName = bridge.transcriberName
+        if viewModel.transcriberName != transcriberName {
+            viewModel.transcriberName = transcriberName
+        }
+        let transcriptionStatus = snap.state == .transcribing ? bridge.transcriptionStatus : nil
+        if viewModel.transcriptionStatus != transcriptionStatus {
+            viewModel.transcriptionStatus = transcriptionStatus
+        }
 
         viewModel.applyBridgeState(
             hasFullAccess: true,

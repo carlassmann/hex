@@ -12,6 +12,7 @@ final class LiveActivityCoordinator {
     /// Holds the app awake from transcribing until the activity ends: the microphone, which
     /// kept it running in the background, is already released.
     private var transcribingAssertion: BackgroundAssertion?
+    private var transcribingStartedAt: Date?
 
     func startRecording(startedAt: Date) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
@@ -38,17 +39,23 @@ final class LiveActivityCoordinator {
     }
 
     func markTranscribing(startedAt: Date) {
-        guard let id = currentActivityID else { return }
-        if transcribingAssertion == nil {
+        transcribingStartedAt = startedAt
+        if currentActivityID != nil, transcribingAssertion == nil {
             transcribingAssertion = BackgroundAssertion(name: "Hex transcription")
         }
+        updateTranscribing(subtitle: "Transcribing…")
+    }
+
+    /// Says where a transcription is at, such as "Rewriting on cshed…".
+    func updateTranscribing(subtitle: String) {
+        guard let id = currentActivityID, let startedAt = transcribingStartedAt else { return }
         let state = HexDictationActivityAttributes.ContentState(
             stage: .transcribing,
             startedAt: startedAt,
-            subtitle: "Transcribing locally…"
+            subtitle: subtitle
         )
         Task.detached {
-            await Self.updateActivity(id: id, state: state, staleDate: Date().addingTimeInterval(30))
+            await Self.updateActivity(id: id, state: state, staleDate: Date().addingTimeInterval(60))
         }
     }
 

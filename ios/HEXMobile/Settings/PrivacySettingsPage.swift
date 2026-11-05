@@ -7,6 +7,7 @@ struct PrivacySettingsPage: View {
     @State private var learnTyping = TypingJournalSettings().isEnabled
     @State private var typingLogs = TypingLogSettings().isEnabled
     @State private var showTypingLogs = false
+    private let pairedHex = PairedHexStore.load()?.hex
     @State private var confirmingTypingLogs = SettingsSnapshotFixture.confirmsTypingLogs
 
     var body: some View {
@@ -14,7 +15,8 @@ struct PrivacySettingsPage: View {
             HStack(spacing: 7) {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 11, weight: .medium))
-                Text("Everything stays on this iPhone")
+                Text(pairedHex.map { "Recordings go to \($0.name); everything else stays on this iPhone" }
+                     ?? "Everything stays on this iPhone")
                     .font(.system(size: 13))
             }
             .foregroundStyle(HexTheme.textMuted)

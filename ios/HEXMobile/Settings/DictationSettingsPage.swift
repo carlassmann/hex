@@ -327,6 +327,12 @@ struct DictationSettingsPage: View {
                     SettingsDivider()
                 }
 
+                RemoteHexSection(dictation: dictation)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+
+                SettingsDivider()
+
                 // With a car, headset or headphones connected (`MicrophoneRoute`).
                 HStack(spacing: 12) {
                     SettingsRowLabel(

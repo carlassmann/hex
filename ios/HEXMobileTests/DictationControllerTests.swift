@@ -2388,8 +2388,9 @@ final class DictationControllerTests: XCTestCase {
         try await settle()
         controller.finishRecording()
         try await settle()
-        XCTAssertEqual(controller.phase, .failed("The speech model isn't ready."))
-        XCTAssertEqual(bridge.snapshot().message, "The speech model isn't ready.")
+        let failure = "The speech model isn't ready. Recording kept on this iPhone."
+        XCTAssertEqual(controller.phase, .failed(failure))
+        XCTAssertEqual(bridge.snapshot().message, failure)
     }
 
     /// The keyboard opened Hex to dictate (its speech model was missing) and the microphone

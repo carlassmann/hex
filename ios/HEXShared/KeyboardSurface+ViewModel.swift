@@ -293,6 +293,13 @@ final class KeyboardViewModel: ObservableObject {
         return nil
     }
     @Published var style: DictationStyle = .polished
+    /// The paired Hex that transcribes, or nil when this iPhone does.
+    @Published var transcriberName: String?
+    /// The containing app's "cshed · rewriting · 0:07" while it transcribes.
+    @Published var transcriptionStatus: String?
+    /// The selected text in the host field, when it could be a word-list entry.
+    @Published var selectedWord: String?
+    @Published var addedWord: String?
     @Published var activeTray: PickerTray = .none
     /// Settings › Dictation language (nil for Automatic), what Automatic resolves to, and the
     /// languages the keyboard's quick switch offers. Empty choices hide the switch.
@@ -333,6 +340,7 @@ final class KeyboardViewModel: ObservableObject {
     var coldStartURL: URL = KeyboardLaunchRequest.startSession(requestedAt: nil).url
     private(set) var pendingCommand: PendingCommand?
 
+    var onAddWord: ((String) -> Void)?
     var onDictateTap: (() -> Void)?
     var onLocalDictateTap: (() -> Void)?
     /// The finger landed on the full keyboard's Hex key (wall clock), before it is a tap,

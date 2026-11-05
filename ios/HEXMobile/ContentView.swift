@@ -561,6 +561,19 @@ struct ContentView: View {
             .padding(.horizontal, 18)
             .hexControlReveal(showPreparing, reduceMotion: reduceMotion, scale: 0.96, blur: 2.0)
 
+            Text(dictation.transcriptionStatus ?? String(localized: "Transcribing…"))
+                .font(.system(size: 13, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(HexTheme.textBase)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(.black.opacity(0.45), in: Capsule())
+                .padding(.horizontal, 18)
+                .allowsHitTesting(false)
+                .hexControlReveal(dictation.phase == .transcribing, reduceMotion: reduceMotion, scale: 0.96, blur: 2.0)
+
             Text("Allow microphone access…")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(HexTheme.textMuted)
@@ -794,7 +807,7 @@ struct ContentView: View {
 
                                 Button("Try again") {
                                     withAnimation(HexMotion.stageAnimation(reduceMotion: reduceMotion)) {
-                                        dictation.prepareModel()
+                                        dictation.performPrimaryAction()
                                     }
                                 }
                                 .font(.system(size: 15, weight: .semibold))
@@ -891,11 +904,21 @@ struct ContentView: View {
     }
 
     private var primaryActionLabel: String {
-        dictation.primaryActionPreparesModel ? String(localized: "Set up") : String(localized: "Dictate")
+        switch dictation.phase {
+        case .failed where dictation.unsentRecording != nil:
+            String(localized: "Try again")
+        default:
+            dictation.primaryActionPreparesModel ? String(localized: "Set up") : String(localized: "Dictate")
+        }
     }
 
     private var primaryActionIcon: String {
-        dictation.primaryActionPreparesModel ? "arrow.down" : "mic.fill"
+        switch dictation.phase {
+        case .failed where dictation.unsentRecording != nil:
+            "arrow.clockwise"
+        default:
+            dictation.primaryActionPreparesModel ? "arrow.down" : "mic.fill"
+        }
     }
 
     private var handoffStatusLine: String? {
@@ -910,7 +933,7 @@ struct ContentView: View {
         case .preparingModel:
             return dictation.modelPreparation.detail
         case .transcribing:
-            return String(localized: "Transcribing…")
+            return dictation.transcriptionStatus ?? String(localized: "Transcribing…")
         case .ready where dictation.keyboardSessionEnabled:
             return String(localized: "Ready")
         default:
@@ -925,4 +948,170 @@ struct ContentView: View {
         openedFromKeyboard: .constant(false),
         showSetup: .constant(false)
     )
+}
+
+/// Pairs with a desktop Hex in the tailnet that then transcribes for this iPhone.
+struct RemoteHexSection: View {
+    let dictation: DictationController
+    @State private var address = ""
+    @State private var code = ""
+    @State private var pairing = false
+    @State private var scanning = false
+    @State private var fallsBackToDevice = PairedHexStore.fallsBackToDevice
+    @State private var showingWordList = false
+    @State private var failure: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Transcribe on a remote Hex")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(HexTheme.textBase)
+                Text(caption)
+                    .font(.system(size: 12))
+                    .foregroundStyle(failure == nil ? HexTheme.textFaint : .red)
+            }
+            if dictation.pairedHex != nil {
+                Toggle("Fall back to this iPhone", isOn: $fallsBackToDevice)
+                    .font(.system(size: 13))
+                    .onChange(of: fallsBackToDevice) { _, on in PairedHexStore.fallsBackToDevice = on }
+                Button(wordListLabel) { showingWordList = true }
+                    .font(.system(size: 13, weight: .medium))
+                Button("Unpair") { dictation.unpairHex() }
+                    .font(.system(size: 13, weight: .medium))
+            } else {
+                if PairingScanner.isAvailable {
+                    Button("Scan QR code") { scanning = true }
+                        .font(.system(size: 13, weight: .medium))
+                        .disabled(pairing)
+                }
+                field("cbook.tailnet.ts.net:47831", text: $address, keyboard: .URL)
+                HStack(spacing: 8) {
+                    field("Code", text: $code, keyboard: .asciiCapable)
+                    Button(pairing ? "Pairing…" : "Pair", action: pair)
+                        .font(.system(size: 13, weight: .medium))
+                        .disabled(pairing || address.isEmpty || code.isEmpty)
+                }
+            }
+        }
+        .task(id: dictation.pairedHex) { await dictation.wordList.sync() }
+        .sheet(isPresented: $showingWordList) {
+            WordListSheet(dictation: dictation)
+        }
+        .sheet(isPresented: $scanning) {
+            PairingScanner { scannedAddress, scannedCode in
+                scanning = false
+                address = scannedAddress
+                code = scannedCode
+                pair()
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    private var wordListLabel: String {
+        switch dictation.wordList.terms.count {
+        case 0: "Word list"
+        case 1: "Word list · 1 word"
+        case let count: "Word list · \(count) words"
+        }
+    }
+
+    private var caption: String {
+        if let failure { return failure }
+        if let hex = dictation.pairedHex {
+            return fallsBackToDevice
+                ? "\(hex.name) transcribes with its model and Modes. Falls back to this iPhone when it doesn't answer."
+                : "\(hex.name) transcribes with its model and Modes. When it doesn't answer, dictation fails."
+        }
+        return "Run hex remote pair on a Mac or PC in your tailnet, then scan its QR code or enter its address and code."
+    }
+
+    private func field(_ placeholder: String, text: Binding<String>, keyboard: UIKeyboardType) -> some View {
+        TextField(placeholder, text: text)
+            .font(.system(size: 13))
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .keyboardType(keyboard)
+            .padding(.horizontal, 11)
+            .frame(height: 32)
+            .background(HexTheme.layer02, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func pair() {
+        pairing = true
+        failure = nil
+        Task {
+            do {
+                try await dictation.pairWithHex(address: address, code: code)
+                code = ""
+            } catch {
+                failure = error.localizedDescription
+            }
+            pairing = false
+        }
+    }
+}
+
+/// The paired Hex's word list: names and terms its transcription and cleanup spell right.
+/// Select a word in any app and tap "Add to word list" on the Hex keyboard, or add it here.
+private struct WordListSheet: View {
+    let dictation: DictationController
+    @State private var newWord = ""
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    HStack {
+                        TextField("Add a word or name", text: $newWord)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .onSubmit(add)
+                        Button("Add", action: add)
+                            .disabled(newWord.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                } footer: {
+                    Text(dictation.wordList.error
+                        ?? "Synced with \(dictation.pairedHex?.name ?? "your Hex"). In any app, select a word and tap Add to word list on the Hex keyboard.")
+                }
+                if !dictation.wordList.pending.isEmpty {
+                    Section("Waiting to sync") {
+                        ForEach(dictation.wordList.pending, id: \.self) { Text($0).foregroundStyle(.secondary) }
+                    }
+                }
+                Section {
+                    ForEach(dictation.wordList.terms) { term in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(term.term)
+                            if !term.soundsLike.isEmpty {
+                                Text("Sounds like \(term.soundsLike.joined(separator: ", "))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .onDelete { offsets in
+                        let terms = offsets.map { dictation.wordList.terms[$0] }
+                        Task { for term in terms { await dictation.wordList.remove(term) } }
+                    }
+                }
+            }
+            .navigationTitle("Word list")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+            .refreshable { await dictation.wordList.sync() }
+            .task { await dictation.wordList.sync() }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private func add() {
+        let word = newWord
+        newWord = ""
+        Task { await dictation.wordList.add(word) }
+    }
 }

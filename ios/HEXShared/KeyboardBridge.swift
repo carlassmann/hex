@@ -501,6 +501,9 @@ struct KeyboardBridge {
     private enum Key {
         static let command = "keyboard.command"
         static let modelInstalled = "model.installed"
+        static let transcriberName = "model.transcriberName"
+        static let transcriptionStatus = "dictation.transcriptionStatus"
+        static let pendingWords = "vocabulary.pendingWords"
         static let snapshot = "keyboard.snapshot"
         static let warmDuration = "settings.warmDuration"
         static let warmDurationReviewed = "settings.warmDuration.reviewedForKeyboardDictation"
@@ -518,6 +521,8 @@ struct KeyboardBridge {
         static let heldDictation = "keyboard.heldDictation"
         static let shownAt = "keyboard.shownAt"
         static let hiddenAt = "keyboard.hiddenAt"
+        static let warmEnd = "diagnostics.warmEnd"
+        static let coldOpen = "diagnostics.coldOpen"
     }
 
     private let defaults: UserDefaults?
@@ -619,6 +624,35 @@ struct KeyboardBridge {
         nonmutating set {
             defaults?.set(newValue.rawValue, forKey: Key.style)
         }
+    }
+
+    /// Where the current transcription is at ("cshed · rewriting · 0:07"), or nil.
+    var transcriptionStatus: String? {
+        get { defaults?.string(forKey: Key.transcriptionStatus) }
+        nonmutating set { defaults?.set(newValue, forKey: Key.transcriptionStatus) }
+    }
+
+    /// Where dictations are transcribed: a paired Hex's name, or nil for this iPhone.
+    var transcriberName: String? {
+        get { defaults?.string(forKey: Key.transcriberName) }
+        nonmutating set { defaults?.set(newValue, forKey: Key.transcriberName) }
+    }
+
+    /// Words the keyboard added to the word list that the app hasn't synced to the
+    /// paired Hex yet.
+    var pendingWords: [String] {
+        defaults?.stringArray(forKey: Key.pendingWords) ?? []
+    }
+
+    func queueWord(_ word: String) {
+        let queued = pendingWords
+        guard !queued.contains(where: { $0.caseInsensitiveCompare(word) == .orderedSame }) else { return }
+        defaults?.set(queued + [word], forKey: Key.pendingWords)
+    }
+
+    /// Drops the words that were synced, keeping any the keyboard queued meanwhile.
+    func removePendingWords(_ synced: [String]) {
+        defaults?.set(pendingWords.filter { !synced.contains($0) }, forKey: Key.pendingWords)
     }
 
     /// Settings › Microphone. Unset, it is Automatic, or Bluetooth for someone who turned off
@@ -786,6 +820,26 @@ struct KeyboardBridge {
             heartbeat: fullAccessOnReport?.at,
             now: now
         )
+    }
+
+    /// A diagnostic: when and why the app last ended the warm session.
+    func recordWarmEnd(_ why: String, at time: TimeInterval) {
+        defaults?.set(["at": time, "why": why] as [String: Any], forKey: Key.warmEnd)
+    }
+
+    /// A diagnostic: when the keyboard last opened the app instead of dictating, and why.
+    func recordColdOpen(_ why: String, at time: TimeInterval) {
+        defaults?.set(["at": time, "why": why] as [String: Any], forKey: Key.coldOpen)
+    }
+
+    var lastWarmEnd: (at: TimeInterval, why: String)? { record(Key.warmEnd) }
+    var lastColdOpen: (at: TimeInterval, why: String)? { record(Key.coldOpen) }
+
+    private func record(_ key: String) -> (at: TimeInterval, why: String)? {
+        guard let entry = defaults?.dictionary(forKey: key),
+              let at = entry["at"] as? TimeInterval,
+              let why = entry["why"] as? String else { return nil }
+        return (at, why)
     }
 
     func publish(_ snapshot: KeyboardSnapshot) {

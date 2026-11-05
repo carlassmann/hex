@@ -10,6 +10,8 @@ struct HEXMobileApp: App {
     @State private var openPage: SettingsPage?
     /// Counts the keyboard's Open Hex taps from the Hex key menu: each one shows Home.
     @State private var homeRequests = 0
+    /// A pair link waiting for you to confirm where your recordings would go.
+    @State private var pendingPairing: (address: String, code: String)?
 
     init() {
         FullKeyboardSettings().applyLaunchArguments()
@@ -59,6 +61,11 @@ struct HEXMobileApp: App {
                     WhatsNew.openedByLink = true
                     // A Hex words file from AirDrop, Files or Open in Hex: its review sheet.
                     if HexInbox.open(url) { return }
+                    // A link can come from anywhere, so it pairs only once you confirm its host.
+                    if let link = RemoteHexPairing.link(url) {
+                        pendingPairing = link
+                        return
+                    }
                     guard let request = KeyboardLaunchRequest(url: url) else { return }
                     if case .setup = request {
                         openedFromKeyboard = false
@@ -80,6 +87,20 @@ struct HEXMobileApp: App {
                         openedFromKeyboard = true
                     }
                     dictation.handleKeyboardLaunch(request)
+                }
+                .alert(
+                    pendingPairing.map { "Pair with \($0.address)?" } ?? "",
+                    isPresented: Binding(get: { pendingPairing != nil }, set: { if !$0 { pendingPairing = nil } }),
+                    presenting: pendingPairing
+                ) { link in
+                    Button("Pair") {
+                        Task { try? await dictation.pairWithHex(address: link.address, code: link.code) }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: { _ in
+                    Text(dictation.pairedHex == nil
+                         ? "Your recordings will be transcribed on that Hex."
+                         : "It replaces the Hex you're paired with now, and your recordings go there instead.")
                 }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .background {

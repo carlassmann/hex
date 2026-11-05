@@ -11,6 +11,11 @@ extension DictationController {
         let parakeetLoads = ParakeetLoadGuard()
         parakeetLoads.noteLaunch()
         let parakeetInterrupted = parakeetLoads.lastLoadWasInterrupted
+        if pairedHex != nil {
+            // The paired Hex transcribes; no on-device model loads until a fallback needs it.
+            prepareModel()
+            return
+        }
         if prepareMultilingualParakeetAtLaunch() { return }
         guard #available(iOS 26.0, *) else {
             prepareBeforeAppleSpeechAtLaunch(hasCachedModel: hasCachedModel)

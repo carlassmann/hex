@@ -344,6 +344,7 @@ pub fn run(shutdown: &'static AtomicBool, listener: ListenerConfig, hidden: bool
     let event_log = crate::desktop::events::EventLog::create(&event_path)?;
     let drained_event_log = event_log.clone();
     let transformations = Arc::new(crate::personal_commands::TransformationClient::default());
+    crate::remote::share_transformations(transformations.clone());
     let (developer_sender, developer_receiver) = mpsc::sync_channel(8);
     let (control_sender, control_receiver) = mpsc::sync_channel(8);
     let (recognition_controls, recognition_control_receiver) = mpsc::sync_channel(8);

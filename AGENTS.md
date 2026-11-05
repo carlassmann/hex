@@ -149,7 +149,8 @@ Support>/hex/settings.json`; deterministic personal transcript transformations l
   scripts reach `fetch` or `node:child_process` only after exact content-hash approval
   (`personal_commands/trust`).
 - **Privacy & data liability:** Never persist captured audio by default
-  (`HEX_RETAIN_DICTATION_AUDIO` and Labs › Keep recordings are explicit owner-only opt-ins).
+  (`HEX_RETAIN_DICTATION_AUDIO`, `HEX_REMOTE_JOURNAL=<entries>` for paired devices' dictations
+  (`local_api/remote/journal`), and Labs › Keep recordings are explicit owner-only opt-ins).
   Event logs (`live.ndjson`, `process.log`, owner-only and trimmed in place under 10 MB)
   never record dictated text, full URLs, window titles, or transform payloads — `History`
   (7-day default retention, 10k entries / 16 MiB hard caps) is the only dictation text

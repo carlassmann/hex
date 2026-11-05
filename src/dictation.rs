@@ -8,7 +8,7 @@ pub(crate) mod cancel_confirm;
 pub(crate) mod caret_prompt;
 pub(crate) mod caret_text;
 pub(crate) mod clipboard_phrase;
-#[cfg(target_os = "macos")]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) mod config;
 #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
 pub(crate) mod context;
@@ -23,6 +23,8 @@ mod environment;
 pub(crate) mod filler_words;
 pub(crate) mod indicator;
 pub(crate) mod live_text;
+#[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
+pub(crate) mod long_rewrite;
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 pub(crate) mod modes;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

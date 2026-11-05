@@ -71,7 +71,7 @@ fn dictation_profiles_lock() -> &'static RwLock<Profiles> {
     })
 }
 
-fn build_dictation_profiles(settings: &DictationProcessingSettings) -> Profiles {
+pub(crate) fn build_dictation_profiles(settings: &DictationProcessingSettings) -> Profiles {
     Profiles::from_settings(settings)
 }
 

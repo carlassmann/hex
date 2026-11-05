@@ -13,6 +13,7 @@ use crate::dictation::text_replacements::ReplacementSet;
 use crate::dictation::vocabulary::VocabularyEntry;
 
 mod generation;
+mod long;
 mod processed;
 
 pub use self::processed::{Processed, ProcessingObservation};
@@ -625,24 +626,22 @@ impl Profiles {
                 language,
             );
         }
-        let prompt = prompt(
-            profile,
-            &corrected,
-            context,
-            &crate::dictation::vocabulary::merged(
-                &profile.vocabulary,
-                &crate::dictation::vocabulary::entries(),
-            ),
-            source,
+        let vocabulary = crate::dictation::vocabulary::merged(
+            &profile.vocabulary,
+            &crate::dictation::vocabulary::entries(),
         );
-        let (text, observation) = generate_observed(
-            &prompt,
-            profile.model.as_ref(),
-            profile.deadline,
-            cancelled,
-            &profile.name,
-            Instant::now(),
-        );
+        let (text, observation) = if crate::dictation::long_rewrite::is_long(&corrected) {
+            long::rewrite_long(profile, &corrected, context, &vocabulary, source, cancelled)
+        } else {
+            generate_observed(
+                &prompt(profile, &corrected, context, &vocabulary, source),
+                profile.model.as_ref(),
+                profile.deadline,
+                cancelled,
+                &profile.name,
+                Instant::now(),
+            )
+        };
         let model = model_label(&observation);
         match &observation.fallback {
             None => tracing::info!(

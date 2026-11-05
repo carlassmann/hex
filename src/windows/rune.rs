@@ -265,6 +265,7 @@ pub fn open(event_path: PathBuf, shutdown: &'static AtomicBool, start_hidden: bo
     let (control_calls, control_receiver) = mpsc::sync_channel(8);
     let (dictation_controls, dictations) = mpsc::sync_channel(8);
     let processing = crate::dictation::modes::ProcessingState::from_settings(&settings);
+    crate::remote::share_transformations(processing.transformations.clone());
     let local_api = crate::local_api::LocalApi::start_for_app(
         &event_path,
         control_calls,

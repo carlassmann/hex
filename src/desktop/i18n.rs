@@ -31,6 +31,7 @@ mod model_switch;
 pub(crate) mod numbers;
 mod onboarding;
 mod portuguese;
+mod remote;
 mod routing;
 mod russian;
 mod screenshots;
@@ -415,6 +416,7 @@ pub(super) fn all_translations() -> impl Iterator<Item = &'static (&'static str,
         .chain(clipboard_phrase::TRANSLATIONS)
         .chain(agents::TRANSLATIONS)
         .chain(failures::TRANSLATIONS)
+        .chain(remote::TRANSLATIONS)
         .chain(onboarding::TRANSLATIONS)
         .chain(menu::TRANSLATIONS)
         .chain(history::TRANSLATIONS)

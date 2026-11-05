@@ -786,6 +786,11 @@ pub(super) const KEYS: &[Key] = &[
          in a transcript, as the speech model heard them (timestamps=segment|word)",
     ),
     key(
+        "labs.remote_transcription",
+        Kind::Bool,
+        "Labs: send dictations to the Hex connected with hex remote connect, which transcribes them and runs its Output steps; this Mac transcribes when it can't be reached (macOS)",
+    ),
+    key(
         "labs.speakers_only",
         Kind::Bool,
         "Labs: While dictating applies only while the default output is speakers; headphones are \

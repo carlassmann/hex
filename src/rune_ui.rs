@@ -62,6 +62,8 @@ mod platform;
 mod platform_settings;
 pub(crate) mod playground;
 mod practice;
+mod remote;
+use remote::edit as remote_edit;
 mod scenes;
 #[cfg(hex_capture)]
 mod scrawl;
@@ -710,6 +712,8 @@ pub(crate) struct Ui {
     picker: picker::Picker,
     /// Speech models already on this computer, and choosing one.
     found: found::FoundState,
+    /// Labs' remote machines: the one this Mac sends to, and paired devices.
+    remote: remote::RemoteState,
     explainer: explainer::Explainer,
     sound_sets: sound_sets::SoundSets,
     /// Meetings › Settings' Calls sheet and the calls Hex has seen.
@@ -849,6 +853,7 @@ impl Ui {
             output: output::OutputPane::default(),
             picker: picker::Picker::default(),
             found: found::FoundState::default(),
+            remote: remote::RemoteState::default(),
             explainer: explainer::Explainer::default(),
             sound_sets: sound_sets::SoundSets::default(),
             calls: calls::Calls::default(),
@@ -912,9 +917,10 @@ impl Ui {
 
     fn commit(&mut self, mut candidate: AppSettings) -> bool {
         let submitted = candidate.clone();
+        let (local, remote) = remote_edit::split(self, &candidate);
         match &mut self.service {
-            Service::Live(backend) => match backend.save(&self.settings, &candidate) {
-                Ok(saved) => candidate = saved,
+            Service::Live(backend) => match backend.save(&self.settings, &local) {
+                Ok(saved) => candidate = remote_edit::rejoined(saved, &submitted, &remote),
                 Err(error) => {
                     self.error = Some(format!("{error:#}"));
                     return false;
@@ -928,6 +934,7 @@ impl Ui {
             self.vocabulary.reload(&candidate.vocabulary);
         }
         self.lab_store.rebase_labs(&submitted.labs, &candidate.labs);
+        remote_edit::send(self, remote, &submitted);
         self.settings = candidate;
         self.modes.committed(&self.settings);
         self.draft_since = None;
@@ -1135,26 +1142,7 @@ impl Ui {
         if service.source.revision == 0 && self.service_settings.as_ref() == Some(&service) {
             return false;
         }
-        let changed = service != self.settings;
-        if changed {
-            let drafts = self.drafts();
-            self.modes.adopt(&service, drafts.modes);
-            if service.dictation_processing != self.settings.dictation_processing {
-                self.open = None;
-            }
-            if !drafts.vocabulary && service.vocabulary != self.settings.vocabulary {
-                self.vocabulary.reload(&service.vocabulary);
-            }
-            // A lab field follows its lab and its saved text: only a saved
-            // text that actually changed may reset the field, so any other
-            // external save leaves its focus and caret alone. A lab toggled
-            // elsewhere resyncs it, dropping a stale draft.
-            self.lab_store
-                .follow_saved(&self.settings.labs, &service.labs, drafts.labs);
-            self.settings = service.clone();
-            self.settings_changed();
-        }
-        self.settings.source = service.source.clone();
+        let changed = self.show(remote_edit::shown(self, service.clone()));
         self.service_settings = Some(service);
         changed
     }
@@ -1420,6 +1408,7 @@ fn poll(ui: &mut Ui, clock: f64, tx: &mut Tx) -> bool {
     }
     changed |= drop_transcribe::poll(ui);
     changed |= found::poll(ui);
+    changed |= remote::poll(ui, clock);
     let login_unknown = ui.platform.login_item.is_none();
     changed |= settings::poll_microphones(ui);
     // General names the input in use; list again when the OS reports an

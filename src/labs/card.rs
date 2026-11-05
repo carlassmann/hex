@@ -102,6 +102,7 @@ impl Feature {
             Self::MeetingIndicatorDisplay => "Indicator on any display",
             Self::MeetingAudioSource => "Choose meeting audio",
             Self::MiddleMouseDictation => "Middle mouse dictation",
+            Self::RemoteTranscription => "Remote transcription",
         }
     }
 
@@ -308,6 +309,9 @@ impl Feature {
             }
             Self::YoloMode => {
                 "Press Return after a dictation is pasted, so the message sends itself"
+            }
+            Self::RemoteTranscription => {
+                "Send dictations, meeting audio, and Annotate narration to another Hex, which transcribes them and runs its Output steps. When it can't be reached, this Mac does"
             }
             Self::CopyDictationAudio => {
                 "Copy a kept dictation's audio as a file from History, the menu bar, or the tray; needs Keep recordings"

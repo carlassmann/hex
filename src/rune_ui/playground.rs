@@ -290,6 +290,8 @@ const PATHS: &[(&str, &str)] = &[
     ("mac-labs-category", "Window/General/Labs category"),
     ("mac-labs-search", "Window/General/Labs search"),
     ("mac-labs-settings", "Window/General/Labs settings"),
+    ("mac-labs-remote", "Window/General/Labs remote devices"),
+    ("mac-output-remote", "Window/Output/Remote steps"),
     ("mac-labs-yolo-mode", "Window/General/Labs YOLO mode"),
     (
         "mac-labs-yolo-mode-picker",

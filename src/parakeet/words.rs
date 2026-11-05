@@ -42,6 +42,13 @@ pub fn transcribe_with_words(
         return Ok(crate::transcription::Transcript::default());
     }
     transcribe_in_chunks(samples, WORD_CHUNK_SAMPLES, |chunk| {
+        // Labs › Remote transcription: the paired Hex transcribes, and this
+        // Mac loads a model only when it can't.
+        if let Some(connection) = crate::remote::client::timed_active()
+            && let Ok(transcript) = crate::remote::client::transcribe_timed(&connection, &chunk)
+        {
+            return Ok(transcript);
+        }
         wait_for_dictation_idle()?;
         let selection = selection.clone();
         let (send, transcript) = mpsc::sync_channel(1);

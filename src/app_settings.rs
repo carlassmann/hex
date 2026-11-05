@@ -823,8 +823,12 @@ impl AppSettings {
             Ordering::Release,
         );
         crate::audio::set_avoid_bluetooth_microphone(self.avoid_bluetooth_microphone);
+        // Labs › Remote transcription: this Mac's fallback processes text as
+        // the connected Hex does, with a copy of its settings.
+        let applied = crate::remote::settings::applied(self);
+        let processing = &applied.dictation_processing;
         CUSTOM_TRANSFORMATIONS_SELECTED.store(
-            crate::personal_commands::custom_transformations_selected(&self.dictation_processing),
+            crate::personal_commands::custom_transformations_selected(processing),
             Ordering::Release,
         );
         crate::feedback::set_enabled(self.sound_effects);
@@ -928,11 +932,8 @@ impl AppSettings {
         ));
         set_microphone_selection(self.microphone.as_deref());
         #[cfg(target_os = "macos")]
-        crate::dictation::config::update_dictation_profiles(
-            &self.dictation_processing,
-            self.labs.voice_prompt,
-        );
-        crate::dictation::vocabulary::apply(&self.vocabulary, self.vocabulary_boost);
+        crate::dictation::config::update_dictation_profiles(processing, self.labs.voice_prompt);
+        crate::dictation::vocabulary::apply(&applied.vocabulary, applied.vocabulary_boost);
     }
 
     /// Mode activations saved while Finder showed filename extensions carry a

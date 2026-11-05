@@ -32,6 +32,11 @@ pub fn support_dir() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("HEX_APPLICATION_SUPPORT_DIR") {
         return Ok(path.into());
     }
+    default_support_dir()
+}
+
+#[cfg(not(test))]
+fn default_support_dir() -> Result<PathBuf> {
     let data =
         dirs::data_dir().ok_or_else(|| eyre!("application data directory is unavailable"))?;
     let folder = if is_macos_test_build() {
@@ -40,6 +45,13 @@ pub fn support_dir() -> Result<PathBuf> {
         "hex"
     };
     Ok(data.join(folder))
+}
+
+/// Tests never read or write this computer's Hex: its settings, Labs, or the
+/// pairing that would send test audio to another machine.
+#[cfg(test)]
+fn default_support_dir() -> Result<PathBuf> {
+    Ok(std::env::temp_dir().join(format!("hex-tests-{}", std::process::id())))
 }
 
 pub fn logs_dir() -> Result<PathBuf> {

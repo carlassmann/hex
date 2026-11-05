@@ -20,7 +20,7 @@ use crate::history::History;
 use crate::history::HistoryKind;
 use crate::paste::{PasteMode, Paster};
 use crate::transcription::WarmTranscriber;
-use crate::transcription::engine::{PendingTranscript, TranscriptionEngine};
+use crate::transcription::engine::TranscriptionEngine;
 use crate::transcription::gguf_session::{OfflineGgufSession, output_truncated};
 use crate::transcription::models::{
     TranscriptionModelId, TranscriptionSelection, model_path, validate,
@@ -90,7 +90,7 @@ struct InferenceJob {
     job_id: DictationJobId,
     control: Arc<JobControl>,
     submitted_at: Instant,
-    transcript: PendingTranscript,
+    transcript: JobTranscript,
     audio_ms: u64,
     prepare_ms: u128,
     target: TranscriptionTarget,
@@ -120,6 +120,8 @@ struct ProcessorJob {
     language: String,
     timings: JobTimings,
     recording: Option<crate::history::Recording>,
+    /// The connected Hex's processed text; `text` is then its raw transcript.
+    remote: Option<crate::dictation::processor::Processed>,
 }
 
 /// Pipeline timings carried from inference through output for the final log.
@@ -293,6 +295,9 @@ impl DictationWorker {
                     let events = event_sender.clone();
                     let _ = engine.run(move |model| {
                         prioritize_inference_thread();
+                        if remote::defers_model_load() {
+                            return;
+                        }
                         match WarmTranscriber::load() {
                             Ok(loaded) => {
                                 tracing::info!("transcription model loaded");
@@ -464,9 +469,7 @@ impl DictationWorker {
             })
             .map_err(|error| error.to_string())
         });
-        let transcript = engine
-            .finish_with(stream, samples, offline)
-            .map_err(|_| "dictation worker is unavailable")?;
+        let transcript = JobTranscript::start(target, engine, stream, samples, offline)?;
         let ticket = OutputTicket::new(
             job_id.0,
             TicketKind::Dictation { job_id, target },
@@ -708,14 +711,22 @@ fn run_processor_worker(
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .recv();
-        let Ok(job) = job else { break };
-        let mut processed =
-            process_job_text(&job, crate::dictation::config::dictation_profiles, || {
-                let _ = events.send(WorkerEvent::Stage {
-                    job_id: job.job_id,
-                    stage: DictationJobStage::Processing,
-                });
+        let Ok(mut job) = job else { break };
+        let processing = || {
+            let _ = events.send(WorkerEvent::Stage {
+                job_id: job.job_id,
+                stage: DictationJobStage::Processing,
             });
+        };
+        let raw = job.text.clone();
+        let mut processed = match job.remote.take() {
+            Some(remote) => remote,
+            None => process_job_text(
+                &job,
+                crate::dictation::config::dictation_profiles,
+                processing,
+            ),
+        };
         processed.apply_transformations(
             transformations,
             &job.context,
@@ -740,7 +751,7 @@ fn run_processor_worker(
                 result: Box::new(Ok(CompletedTranscript {
                     text: processed.text,
                     nothing: processed.nothing,
-                    raw: job.text,
+                    raw,
                     application: job.context.application,
                     bundle_name: job.context.bundle_name,
                     return_to: job.return_to,
@@ -809,33 +820,10 @@ fn run_inference_worker(
         let queue_ms = total_started.elapsed().as_millis();
         let inference_started = Instant::now();
         let audio_ms = job.audio_ms;
-        let result = job.transcript.wait().map(|transcribed| {
-            tracing::info!(
-                source = transcribed.source.label(),
-                finish_ms = transcribed.finish_ms,
-                audio_ms,
-                "transcribed dictation"
-            );
-            let raw = transcribed.text;
-            // Labs › Stop phrase: the words that finished this capture never
-            // reach the text, and a capture that was only the phrase reads as
-            // empty.
-            let corrected = match crate::dictation::modes::output::prepare_transcript(
-                raw.clone(),
-                job.stop_phrase.as_deref(),
-                job.target,
-            ) {
-                crate::dictation::modes::output::PreparedTranscript::Ready(text) => text,
-                crate::dictation::modes::output::PreparedTranscript::StopPhraseOnly
-                | crate::dictation::modes::output::PreparedTranscript::Empty => String::new(),
-            };
-            tracing::debug!(
-                raw_transcript = raw,
-                corrected_transcript = corrected,
-                "prepared local transcript"
-            );
-            corrected
-        });
+        let target = job.target;
+        let (result, remote) =
+            job.transcript
+                .wait(target, audio_ms, &job.context, job.stop_phrase.as_deref());
         let timings = JobTimings {
             total_started,
             queue_ms,
@@ -844,7 +832,6 @@ fn run_inference_worker(
             inference_ms: inference_started.elapsed().as_millis(),
             send_gate: job.send_gate,
         };
-        let target = job.target;
         match result {
             Ok(text) if target.processes() && !text.trim().is_empty() => {
                 if processor_jobs
@@ -859,6 +846,7 @@ fn run_inference_worker(
                         language: job.language,
                         timings,
                         recording: job.recording,
+                        remote,
                     })
                     .is_err()
                 {
@@ -1324,6 +1312,7 @@ mod tests {
                 send_gate: None,
             },
             recording: None,
+            remote: None,
         }
     }
 
@@ -2118,6 +2107,9 @@ mod tests {
         );
     }
 }
+
+mod remote;
+use remote::JobTranscript;
 
 #[cfg(test)]
 #[path = "dictation/tail_tests.rs"]

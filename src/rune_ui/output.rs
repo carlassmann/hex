@@ -203,6 +203,7 @@ pub(super) fn pane(ui: &Ui, p: Paint, reduced: bool, layer: &mut Vec<El>) -> El 
     let processing = &ui.settings.dictation_processing;
     let mut content = page("output-content")
         .children(trust_card(ui, p))
+        .children(super::remote::output_note(ui, p))
         .child(agent_card(ui, p, reduced));
     // Labs › Dictation style writes every dictation after the corrections
     // and any rewrite, before the transformations below.
@@ -232,11 +233,14 @@ fn agent_card(ui: &Ui, p: Paint, reduced: bool) -> El {
     } else {
         examples::copy(p, ui.output.examples, &ui.output.order, reduced)
     };
-    let open = Button::new(tr("Open file"))
-        .variant(ButtonVariant::Ghost)
-        .on_press(open_settings_file)
-        .build_push(p.k)
-        .key("open-settings-file");
+    // The paired Hex's settings file isn't on this Mac.
+    let open = super::remote::edit::machine(ui).is_none().then(|| {
+        Button::new(tr("Open file"))
+            .variant(ButtonVariant::Ghost)
+            .on_press(open_settings_file)
+            .build_push(p.k)
+            .key("open-settings-file")
+    });
     let edit = button(
         p,
         "edit-with-agent",
@@ -247,7 +251,7 @@ fn agent_card(ui: &Ui, p: Paint, reduced: bool) -> El {
         },
         ButtonKind::Primary,
         |ui: &mut Ui, tx: &mut Tx| {
-            tx.copy(agent_prompt(None));
+            tx.copy(agent_prompt(None, super::remote::edit::machine(ui)));
             ui.output.prompt_copied = true;
             ui.output.fix_copied = None;
         },
@@ -280,7 +284,7 @@ fn agent_card(ui: &Ui, p: Paint, reduced: bool) -> El {
                     // running past the card.
                     .shrink()
                     .flex_wrap()
-                    .child(open)
+                    .children(open)
                     .child(edit),
             ),
     )
@@ -791,7 +795,10 @@ fn fix_this(ui: &mut Ui, tx: &mut Tx) {
         return;
     }
     let result = preview(&ui.settings.dictation_processing.default_mode, &trial);
-    tx.copy(agent_prompt(Some((&trial, &result))));
+    tx.copy(agent_prompt(
+        Some((&trial, &result)),
+        super::remote::edit::machine(ui),
+    ));
     ui.output.prompt_copied = true;
     ui.output.fix_copied = Some(trial);
 }
@@ -800,17 +807,23 @@ fn fix_this(ui: &mut Ui, tx: &mut Tx) {
 /// built-in ones, and how to change them while Hex runs, so any coding
 /// agent can do it. With `fix`, a sentence and what Hex pastes for it,
 /// it ends asking for the right result.
-fn agent_prompt(fix: Option<(&str, &str)>) -> String {
+fn agent_prompt(fix: Option<(&str, &str)>, remote: Option<&str>) -> String {
     let want = match fix {
         Some((said, pasted)) => {
             format!("When I say \"{said}\", Hex pastes \"{pasted}\". It should paste: ")
         }
         None => String::new(),
     };
-    let path = crate::app_settings::path().map_or_else(
-        |_| "Hex's settings.json".into(),
-        |path| path.display().to_string(),
-    );
+    let path = match remote {
+        Some(machine) => format!(
+            "the Hex on {machine}, which transcribes for this computer (the `hex` commands \
+             below change them there; don't edit any settings file)"
+        ),
+        None => crate::app_settings::path().map_or_else(
+            |_| "Hex's settings.json".into(),
+            |path| path.display().to_string(),
+        ),
+    };
     let builtins = crate::personal_commands::builtin_transformation_ids()
         .map(|id| format!("\"{id}\""))
         .collect::<Vec<_>>()
@@ -936,9 +949,9 @@ mod tests {
 
     #[test]
     fn fix_this_ends_edit_with_agents_prompt_with_the_sentence_and_its_result() {
-        let plain = agent_prompt(None);
+        let plain = agent_prompt(None, None);
         assert!(plain.ends_with("What I want: "));
-        let fix = agent_prompt(Some(("open code shipped", "opencode shipped")));
+        let fix = agent_prompt(Some(("open code shipped", "opencode shipped")), None);
         assert!(fix.starts_with(plain.as_str()));
         assert!(fix.ends_with(
             "What I want: When I say \"open code shipped\", Hex pastes \"opencode shipped\". It should paste: "

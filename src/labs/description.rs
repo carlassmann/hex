@@ -213,6 +213,9 @@ impl Feature {
             Self::YoloMode => {
                 "Press Return after a dictation is pasted, so the message sends itself"
             }
+            Self::RemoteTranscription => {
+                "Send dictations, meeting audio, and Annotate narration to another Hex, which transcribes them and runs its Output steps (meetings and Annotate get its raw transcript). When it can't be reached, this Mac does"
+            }
             Self::CopyDictationAudio => {
                 "History entries with a kept recording gain Copy audio, and the menu bar or tray gains Copy last dictation audio: one file on the clipboard, ready to attach. Needs Keep recordings, and copies the kept audio without storing any itself"
             }

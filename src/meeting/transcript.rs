@@ -751,16 +751,18 @@ impl ChunkModel {
         }
     }
 
-    /// Fails with the chunk's own transcription error. A chunk without
-    /// detected speech returns an empty transcript without the model.
+    /// Fails with the chunk's own transcription error. A speechless chunk is an empty
+    /// transcript without the model; Labs › Remote transcription's paired Hex hears speech first.
     fn transcribe(&mut self, samples: &[f32]) -> Result<Chunked> {
         // Quitting drops the dictation engine; a model loaded now would
         // outlast the drain.
         if crate::desktop::process_exit::quitting() {
             return Ok(Chunked::Unavailable(eyre!("Hex is quitting")));
         }
-        if speechless(samples) {
-            return Ok(Chunked::Done(Transcript::default()));
+        if let Some(done) = (speechless(samples).then(Transcript::default))
+            .or_else(|| crate::remote::client::transcribed_remotely(samples))
+        {
+            return Ok(Chunked::Done(done));
         }
         let engine = crate::transcription::engine::TranscriptionEngine::shared();
         if let Some(engine) = &engine

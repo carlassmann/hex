@@ -14,6 +14,7 @@ mod human;
 mod launch;
 mod prepare;
 mod progress;
+mod remote;
 mod transcribe;
 
 use clap::{Args, Subcommand};
@@ -32,18 +33,6 @@ pub struct Output {
     /// Print the versioned JSON reply (see docs/cli.md).
     #[arg(long)]
     pub json: bool,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum RemoteCli {
-    /// Print a one-time code a device can pair with for five minutes.
-    Pair,
-    /// List the paired devices.
-    Devices,
-    /// Unpair a device.
-    Revoke { id: String },
-    /// Stop serving paired devices (after Hex restarts).
-    Disable,
 }
 
 /// The control commands at the top of `hex`.
@@ -83,7 +72,7 @@ pub enum ControlCli {
     /// Let your other devices (an iPhone, another Hex) transcribe on this machine.
     Remote {
         #[command(subcommand)]
-        command: RemoteCli,
+        command: remote::RemoteCli,
     },
     /// Start, stop, toggle, or cancel a dictation, as the shortcut would.
     ///
@@ -445,86 +434,6 @@ pub enum Toggle {
 }
 
 /// Exits with `code` once stdout is flushed.
-fn remote(command: RemoteCli) -> u8 {
-    match remote_command(command) {
-        Ok(code) => code,
-        Err(error) => {
-            eprintln!("{error:#}");
-            EXIT_REFUSED
-        }
-    }
-}
-
-fn remote_command(command: RemoteCli) -> color_eyre::Result<u8> {
-    use crate::remote::pairing;
-    match command {
-        RemoteCli::Pair => {
-            let was_enabled = pairing::enabled();
-            pairing::set_enabled(true)?;
-            let code = pairing::issue_pairing_code()?;
-            let port = pairing::port();
-            let host = pairing::tailscale_dns_name().unwrap_or_else(pairing::machine_label);
-            let link = format!("hex-dictation://pair?host={host}:{port}&code={code}");
-            println!(
-                "Scan with Hex on your iPhone to pair with {}:",
-                pairing::machine_label()
-            );
-            println!();
-            println!("{}", pairing_qr(&link)?);
-            println!("Or enter:");
-            println!("  Address  {host}:{port}");
-            println!("  Code     {}-{}", &code[..6], &code[6..]);
-            println!();
-            println!("The code works once, for five minutes.");
-            println!("{link}");
-            if !was_enabled {
-                println!();
-                println!("Restart Hex to start serving devices (hex restart).");
-            }
-            println!(
-                "Expose it in your tailnet once with: tailscale serve --bg --https={port} http://127.0.0.1:{port}"
-            );
-            Ok(0)
-        }
-        RemoteCli::Devices => {
-            let devices = pairing::devices()?;
-            if devices.is_empty() {
-                println!("No paired devices.");
-            }
-            for device in devices {
-                println!("{}  {}", device.id, device.label);
-            }
-            Ok(0)
-        }
-        RemoteCli::Revoke { id } => {
-            if pairing::revoke(&id)? {
-                println!("Unpaired {id}.");
-                Ok(0)
-            } else {
-                eprintln!("No paired device {id}.");
-                Ok(EXIT_REFUSED)
-            }
-        }
-        RemoteCli::Disable => {
-            pairing::set_enabled(false)?;
-            println!("Remote dictation turns off when Hex restarts.");
-            Ok(0)
-        }
-    }
-}
-
-/// Half-height blocks keep the code small enough for a terminal; dark modules print as
-/// light so phones read it on the usual dark terminal background.
-fn pairing_qr(link: &str) -> color_eyre::Result<String> {
-    use qrcode::render::unicode::Dense1x2;
-    Ok(qrcode::QrCode::new(link)?
-        .render::<Dense1x2>()
-        .dark_color(Dense1x2::Light)
-        .light_color(Dense1x2::Dark)
-        .quiet_zone(true)
-        .build())
-}
-
 pub fn finish(code: u8) -> ! {
     let _ = std::io::stdout().flush();
     std::process::exit(code.into())
@@ -534,7 +443,7 @@ pub fn finish(code: u8) -> ! {
 /// only `completions` asks for it, so no other command pays for it.
 pub fn run(command: ControlCli, top_level: impl FnOnce() -> clap::Command) -> u8 {
     match command {
-        ControlCli::Remote { command } => remote(command),
+        ControlCli::Remote { command } => remote::run(command),
         ControlCli::Status { output } => send(ControlCommand::Status, output),
         ControlCli::Start { output } => launch::start(output),
         ControlCli::Quit { force, output } => send(ControlCommand::Quit { force }, output),

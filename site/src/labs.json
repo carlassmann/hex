@@ -756,6 +756,17 @@
       "title": "Pause from menu bar"
     },
     {
+      "added": "2026-11-11",
+      "group": "dictation",
+      "groupTitle": "Dictation",
+      "id": "remote-transcription",
+      "oses": [
+        "macos"
+      ],
+      "summary": "Send dictations, meeting audio, and Annotate narration to another Hex, which transcribes them and runs its Output steps. When it can't be reached, this Mac does",
+      "title": "Remote transcription"
+    },
+    {
       "added": "2026-11-12",
       "group": "output",
       "groupTitle": "Output",

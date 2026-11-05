@@ -160,6 +160,9 @@ pub(in crate::rune_ui) fn page(ui: &Ui, p: Paint, cx: &rune::Cx<Ui>, layer: &mut
             }
         }
     }
+    if browsing {
+        content = content.child(super::super::remote::devices_section(ui, p));
+    }
     content = content.child(footer(p));
     col()
         .key("labs-store")

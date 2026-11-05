@@ -191,6 +191,9 @@ struct Owner {
     /// goes through `enter`/`leave`/`promote_pending`, which is the single
     /// writer of `State::recording`.
     slot: CaptureSlot,
+    /// Labs › Remote transcription: another Hex transcribes this capture,
+    /// so it never streams (decided as each capture starts).
+    remote_capture: bool,
     /// The warm pre-roll timeline and (while `slot` is `Recording`) the
     /// active capture recording.
     capture: DictationCapture,
@@ -635,6 +638,7 @@ impl Owner {
             away: false,
             linger: MicrophoneLinger::default(),
             slot: CaptureSlot::Idle,
+            remote_capture: false,
             capture,
             recording_environment,
             commands,
@@ -1084,7 +1088,8 @@ impl Owner {
                     CaptureSlot::Recording {
                         kind: CaptureKind::Hotkey
                     }
-                ) && self.capture.is_intentional()
+                ) && !self.remote_capture
+                    && self.capture.is_intentional()
                     && let Some(engine) = &self.engine
                 {
                     self.capture.begin_stream(engine);
@@ -1324,6 +1329,10 @@ impl Owner {
                 .start_hotkey_at(at, crate::dictation::hotkey_pre_roll(while_dictating)),
             CaptureKind::Programmatic => self.capture.start_programmatic_at(at),
         }
+        // With Labs › Remote transcription another Hex transcribes, so the
+        // capture never streams.
+        self.remote_capture =
+            matches!(kind, CaptureKind::Hotkey) && crate::remote::client::active().is_some();
         self.enter(CaptureSlot::Recording { kind });
     }
 

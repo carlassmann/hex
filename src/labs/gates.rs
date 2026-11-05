@@ -653,3 +653,10 @@ pub fn microphone_linger() -> Option<std::time::Duration> {
         seconds => Some(std::time::Duration::from_secs(seconds)),
     }
 }
+
+/// Dictations go to the Hex this one is connected to (macOS; read as each
+/// dictation is submitted).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn remote_transcription() -> bool {
+    feature_on(Feature::RemoteTranscription)
+}

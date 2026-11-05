@@ -58,6 +58,7 @@ impl Feature {
             | Self::SkipPauses
             | Self::VoiceFilter
             | Self::HideMenuBarIcon
+            | Self::RemoteTranscription
             | Self::Playground => Group::Dictation,
             Self::SmartSpacing
             | Self::SpokenFormatting

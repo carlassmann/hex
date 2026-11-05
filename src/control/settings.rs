@@ -415,6 +415,11 @@ const KEYS: &[Key] = &[
         "Labs: with indicator_position top, the recording indicator grows out of the notch on a screen that has one, and sits below the menu bar elsewhere (macOS)",
     ),
     key(
+        "labs.remote_transcription",
+        Kind::Bool,
+        "Labs: send dictations to the Hex connected with hex remote connect, which transcribes them and runs its Output steps; this Mac transcribes when it can't be reached (macOS)",
+    ),
+    key(
         "labs.skip_pauses",
         Kind::Bool,
         "Labs: a dictation transcribed as a whole clip hears only the start and end of each long pause, so slow computers paste sooner (Linux and Windows)",

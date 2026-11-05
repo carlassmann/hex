@@ -2121,7 +2121,7 @@ fn command_f_searches_labs() {
 
 #[test]
 fn labs_run_setup_again_opens_the_first_run() {
-    let mut rt = runtime("mac-labs", true, (980.0, 2000.0));
+    let mut rt = runtime("mac-labs", true, (980.0, 2600.0));
     assert!(rt.state.first_run.is_none());
     tap(&mut rt, "restart-onboarding");
     assert!(rt.state.error.is_none(), "{:?}", rt.state.error);
@@ -2131,7 +2131,7 @@ fn labs_run_setup_again_opens_the_first_run() {
 #[test]
 fn run_setup_again_opens_the_first_run_on_linux_and_windows() {
     for scene in ["portal", "windows-settings"] {
-        let mut rt = runtime(scene, true, (980.0, 2000.0));
+        let mut rt = runtime(scene, true, (980.0, 2600.0));
         tap(&mut rt, "nav-labs");
         tap(&mut rt, "restart-onboarding");
         assert!(rt.state.error.is_none(), "{scene}: {:?}", rt.state.error);

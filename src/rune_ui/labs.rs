@@ -527,6 +527,13 @@ fn rows(ui: &Ui) -> Vec<Row> {
                     tr("Save the last 15 seconds of your screen. macOS shows the screen-recording dot the whole time it's on"),
                 ));
             }
+            // macOS's dictation worker is the only one that sends clips away.
+            rows.push(row(
+                Feature::RemoteTranscription,
+                Some(&WAVE),
+                tr("Remote transcription"),
+                tr("Send dictations to another Hex, which transcribes them and runs its Output steps. When it can't be reached, this Mac does"),
+            ));
         }
     }
     // Linux's X11 grabs and shortcuts portal take these keys alone.
@@ -760,6 +767,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::FollowLiveTranscript => "lab-follow-live-transcript",
         Feature::CollapsibleMeetingSections => "lab-collapsible-meeting-sections",
         Feature::AnnotateReplay => "lab-annotate-replay",
+        Feature::RemoteTranscription => "lab-remote-transcription",
     }
 }
 
@@ -800,7 +808,8 @@ fn flip(ui: &mut Ui, lab: Lab) {
 }
 
 /// A lab's own settings, on its card while it's on: how long the model sits
-/// unused before it unloads, or the screenshot shortcut and folder.
+/// unused before it unloads, the screenshot shortcut and folder, or the Hex
+/// remote transcription sends to.
 fn extras(ui: &Ui, p: Paint, entry: &Row) -> Option<El> {
     if !entry.on {
         return None;
@@ -826,6 +835,7 @@ fn extras(ui: &Ui, p: Paint, entry: &Row) -> Option<El> {
             p,
             crate::screenshots::system_takes_shortcut(),
         )),
+        Lab::Feature(Feature::RemoteTranscription) => Some(super::remote::connection(ui, p)),
         _ => None,
     }
 }

@@ -19,10 +19,14 @@
 //! - `POST /remote/transcriptions`: a WAV in, the raw transcript with segment
 //!   and word times out, with no Modes (`remote::timed`), for a paired Mac's
 //!   meeting chunks and Annotate words.
+//! - `GET /remote/settings`: what a paired Mac mirrors for its fallback
+//!   (`remote::settings::RemoteSettings`): Modes, vocabulary, and model.
 //! - `GET /remote/vocabulary`: this machine's word list, `{terms}`.
 //! - `POST /remote/vocabulary` `{term, soundsLike?}` adds a word (or spellings);
 //!   `POST /remote/vocabulary/remove` `{term}` removes one. Both answer the new
 //!   `{terms, changed}`, and apply from the next dictation on.
+//! - `POST /remote/control`: a `hex` command that reads or changes those
+//!   settings (`remote::edits`), for a paired Mac editing them from its window.
 
 use std::net::TcpStream;
 use std::sync::atomic::AtomicBool;
@@ -36,6 +40,8 @@ use super::{
     read_body_bounded, streams, wait_for_transcript, write_response,
 };
 
+mod edits;
+pub(super) use edits::forwarded;
 mod journal;
 mod progress;
 mod rewrite;
@@ -119,13 +125,33 @@ pub(super) fn handle_request(request: HttpRequest, context: &HttpContext) -> Req
         }),
         ("POST", "/remote/dictations") => dictation_action(request, query == "progress=1"),
         ("POST", "/remote/transcriptions") => timed::action(request),
+        ("GET", "/remote/settings") => match paired_device(&request) {
+            Some(_) => RequestAction::Respond(settings()),
+            None => RequestAction::Respond(HttpResponse::code(401, "not-paired")),
+        },
         ("GET", "/remote/vocabulary") => match paired_device(&request) {
             Some(_) => RequestAction::Respond(vocabulary(None)),
             None => RequestAction::Respond(HttpResponse::code(401, "not-paired")),
         },
         ("POST", "/remote/vocabulary") => vocabulary_action(request, false),
         ("POST", "/remote/vocabulary/remove") => vocabulary_action(request, true),
+        ("POST", "/remote/control") => edits::action(request),
         _ => RequestAction::Respond(HttpResponse::code(404, "not-found")),
+    }
+}
+
+fn settings() -> HttpResponse {
+    let read = crate::app_settings::AppSettings::load()
+        .and_then(|settings| Ok((settings, crate::remote::pairing::machine_id()?)));
+    match read {
+        Ok((settings, machine_id)) => HttpResponse::json(
+            200,
+            &crate::remote::settings::RemoteSettings::of(&settings, machine_id),
+        ),
+        Err(error) => {
+            tracing::error!(error = %format!("{error:#}"), "remote settings could not be read");
+            HttpResponse::code(500, "settings-unavailable")
+        }
     }
 }
 
@@ -247,6 +273,10 @@ pub(super) enum Action {
         content_length: usize,
         body_prefix: Vec<u8>,
     },
+    Control {
+        content_length: usize,
+        body_prefix: Vec<u8>,
+    },
 }
 
 pub(super) fn handle(connection: &mut TcpStream, action: Action, context: &HttpContext) {
@@ -281,6 +311,10 @@ pub(super) fn handle(connection: &mut TcpStream, action: Action, context: &HttpC
             content_length,
             body_prefix,
         } => edit_vocabulary(connection, remove, content_length, body_prefix, context),
+        Action::Control {
+            content_length,
+            body_prefix,
+        } => edits::run(connection, content_length, body_prefix, context),
     }
 }
 

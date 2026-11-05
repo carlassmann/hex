@@ -92,6 +92,8 @@ pub struct LabsSettings {
     /// id; a group not here is open while it holds a lab that's on.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub groups: std::collections::BTreeMap<String, bool>,
+    /// Dictations go to the Hex this one is connected to (`hex remote connect`; macOS).
+    pub remote_transcription: bool,
 }
 
 /// The idle times Labs › Unload model when idle offers, in minutes.
@@ -146,6 +148,7 @@ impl Default for LabsSettings {
             follow_live_transcript: false,
             collapsible_meeting_sections: false,
             groups: std::collections::BTreeMap::new(),
+            remote_transcription: false,
         }
     }
 }

@@ -114,10 +114,11 @@ pub enum Feature {
     FollowLiveTranscript,
     CollapsibleMeetingSections,
     AnnotateReplay,
+    RemoteTranscription,
 }
 
 impl Feature {
-    pub const ALL: [Self; 50] = [
+    pub const ALL: [Self; 51] = [
         Self::Meetings,
         Self::VoiceFilter,
         Self::Playground,
@@ -168,6 +169,7 @@ impl Feature {
         Self::FollowLiveTranscript,
         Self::CollapsibleMeetingSections,
         Self::AnnotateReplay,
+        Self::RemoteTranscription,
     ];
 
     /// The features this OS and build have.
@@ -242,7 +244,8 @@ impl Feature {
             | Self::FollowLiveTranscript
             | Self::CollapsibleMeetingSections
             | Self::AnnotateReplay
-            | Self::NotchIndicator => Audience::Everyone,
+            | Self::NotchIndicator
+            | Self::RemoteTranscription => Audience::Everyone,
         }
     }
 
@@ -298,7 +301,8 @@ impl Feature {
             | Self::Screenshots
             | Self::FollowLiveTranscript
             | Self::CollapsibleMeetingSections
-            | Self::AnnotateReplay => 20261104,
+            | Self::AnnotateReplay
+            | Self::RemoteTranscription => 20261104,
         }
     }
 
@@ -353,7 +357,8 @@ impl Feature {
             | Self::RecentDictations
             | Self::HideMenuBarIcon
             | Self::NotchIndicator
-            | Self::Screenshots => cfg!(target_os = "macos"),
+            | Self::Screenshots
+            | Self::RemoteTranscription => cfg!(target_os = "macos"),
             Self::TapOrHold => cfg!(any(target_os = "macos", target_os = "linux")),
             Self::KeyboardModelSwitching => crate::keyboard_input_sources::available(),
             Self::AnnotateReplay => {
@@ -445,6 +450,7 @@ impl Feature {
             Self::FollowLiveTranscript => "follow-live-transcript",
             Self::CollapsibleMeetingSections => "collapsible-meeting-sections",
             Self::AnnotateReplay => "annotate-replay",
+            Self::RemoteTranscription => "remote-transcription",
         }
     }
 
@@ -501,6 +507,7 @@ impl Feature {
             Self::FollowLiveTranscript => "labs.follow_live_transcript",
             Self::CollapsibleMeetingSections => "labs.collapsible_meeting_sections",
             Self::AnnotateReplay => "labs.annotate_replay",
+            Self::RemoteTranscription => "labs.remote_transcription",
         }
     }
 
@@ -639,6 +646,9 @@ impl Feature {
             Self::AnnotateReplay => {
                 "Save the last 15 seconds of your screen with hex capture replay or capture.replay_hotkey; macOS shows the screen-recording dot the whole time it's on (macOS 27+)"
             }
+            Self::RemoteTranscription => {
+                "Send dictations to another Hex, which transcribes them and runs its Output steps. When it can't be reached, this Mac does"
+            }
         }
     }
 
@@ -699,6 +709,7 @@ impl Feature {
             Self::FollowLiveTranscript => settings.labs.follow_live_transcript,
             Self::CollapsibleMeetingSections => settings.labs.collapsible_meeting_sections,
             Self::AnnotateReplay => settings.labs.annotate_replay,
+            Self::RemoteTranscription => settings.labs.remote_transcription,
         }
     }
 
@@ -757,6 +768,7 @@ impl Feature {
             &mut labs.follow_live_transcript,
             &mut labs.collapsible_meeting_sections,
             &mut labs.annotate_replay,
+            &mut labs.remote_transcription,
         ]
     }
 
@@ -817,6 +829,7 @@ impl Feature {
                 settings.labs.collapsible_meeting_sections = on;
             }
             Self::AnnotateReplay => settings.labs.annotate_replay = on,
+            Self::RemoteTranscription => settings.labs.remote_transcription = on,
             // Off, no shortcut keeps a key only the feature allows.
             Self::StandaloneSpecialKeys => {
                 settings.labs.standalone_special_keys = on;
@@ -863,8 +876,9 @@ const MEETING_FINISHED_EVENT: u64 = 1 << 28;
 const GNOME_MEETING_CAPSULES: u64 = 1 << 29;
 const SCREENSHOTS: u64 = 1 << 30;
 const ANNOTATE_REPLAY: u64 = 1 << 31;
+const REMOTE_TRANSCRIPTION: u64 = 1 << 32;
 /// Unload-idle minutes (at most 1,440, 11 bits) sit above the switches.
-const MINUTES_SHIFT: u64 = 32;
+const MINUTES_SHIFT: u64 = 33;
 
 /// This process's `labs` switches: unknown until settings load or one is
 /// first read.
@@ -1047,6 +1061,13 @@ pub fn notch_indicator() -> bool {
     on(NOTCH_INDICATOR) && Feature::NotchIndicator.on_this_os()
 }
 
+/// Dictations go to the Hex this one is connected to (macOS; read as each
+/// dictation is submitted).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn remote_transcription() -> bool {
+    on(REMOTE_TRANSCRIPTION) && Feature::RemoteTranscription.on_this_os()
+}
+
 /// A paste on a Wayland desktop without data-control (GNOME) snapshots and
 /// restores the clipboard through an already running XWayland (Linux; read
 /// as each paste starts).
@@ -1220,6 +1241,11 @@ fn encode_where(settings: &LabsSettings, reaches: impl Fn(Feature) -> bool) -> u
             GNOME_MEETING_CAPSULES,
         ),
         (Feature::Screenshots, settings.screenshots, SCREENSHOTS),
+        (
+            Feature::RemoteTranscription,
+            settings.remote_transcription,
+            REMOTE_TRANSCRIPTION,
+        ),
     ]
     .into_iter()
     .filter(|(feature, on, _)| *on && reaches(*feature))
@@ -1669,6 +1695,18 @@ mod tests {
         let state = encode_where(&labs, |_| true);
         assert_ne!(state & SCREENSHOTS, 0);
         assert_eq!(state & MEETING_FINISHED_EVENT, 0);
+        assert_eq!(state >> MINUTES_SHIFT, 24 * 60);
+    }
+
+    #[test]
+    fn remote_transcription_is_its_own_bit_and_off_by_default() {
+        let mut labs = LabsSettings::default();
+        assert_eq!(encode_where(&labs, |_| true) & REMOTE_TRANSCRIPTION, 0);
+        labs.remote_transcription = true;
+        labs.unload_idle_minutes = 24 * 60;
+        let state = encode_where(&labs, |_| true);
+        assert_ne!(state & REMOTE_TRANSCRIPTION, 0);
+        assert_eq!(state & NOTCH_INDICATOR, 0);
         assert_eq!(state >> MINUTES_SHIFT, 24 * 60);
     }
 

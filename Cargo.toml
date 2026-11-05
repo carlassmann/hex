@@ -81,6 +81,7 @@ url = "2.5.8"
 # `native-tls`, not `native-tls-no-default`: ureq 3.4 checks the former's
 # name and panics on any https request without it.
 ureq = { version = "3.4.2", default-features = false, features = ["native-tls"] }
+qrcode = { version = "0.14.1", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 capture-core = { path = "crates/capture-core" }

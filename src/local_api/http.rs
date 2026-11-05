@@ -1,11 +1,11 @@
-use std::io::{Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use super::{HEADER_DEADLINE, MAX_HEADER_BYTES, MAX_HEADERS, MAX_PATH_BYTES};
+use super::{HEADER_DEADLINE, MAX_AUDIO_BYTES, MAX_HEADER_BYTES, MAX_HEADERS, MAX_PATH_BYTES};
 
 pub(super) struct HttpRequest {
     pub(super) method: String,
@@ -13,6 +13,8 @@ pub(super) struct HttpRequest {
     pub(super) authorization: Option<String>,
     pub(super) dictation_token: Option<String>,
     pub(super) stream_token: Option<String>,
+    /// `X-Hex-Application`: the app a remote device dictated into.
+    pub(super) remote_application: Option<String>,
     pub(super) content_type: Option<String>,
     pub(super) content_length: Option<usize>,
     pub(super) body_prefix: Vec<u8>,
@@ -256,6 +258,7 @@ pub(super) fn read_request_until(
     let mut authorization = None;
     let mut dictation_token = None;
     let mut stream_token = None;
+    let mut remote_application = None;
     let mut content_type = None;
     let mut content_length = None;
     for (index, line) in lines.enumerate() {
@@ -275,6 +278,8 @@ pub(super) fn read_request_until(
                 return Err(RequestReadError::Invalid);
             }
             stream_token = Some(value.trim().to_owned());
+        } else if name.eq_ignore_ascii_case("x-hex-application") {
+            remote_application = Some(value.trim().to_owned());
         } else if name.eq_ignore_ascii_case("content-type") {
             content_type = Some(value.trim().to_owned());
         } else if name.eq_ignore_ascii_case("content-length") {
@@ -301,6 +306,7 @@ pub(super) fn read_request_until(
         authorization,
         dictation_token,
         stream_token,
+        remote_application,
         content_type,
         content_length,
         body_prefix,
@@ -324,4 +330,46 @@ pub(super) fn write_response(
     stream.write_all(b"\r\n")?;
     stream.write_all(&response.body)?;
     stream.flush()
+}
+
+/// Reads and decodes an uploaded WAV; `Err(None)` means Hex is shutting down.
+pub(super) fn read_audio(
+    stream: &mut TcpStream,
+    content_length: usize,
+    mut body: Vec<u8>,
+    shutdown: &AtomicBool,
+    deadline: Duration,
+) -> std::result::Result<crate::transcription::service::AudioClip, Option<HttpResponse>> {
+    if let Err(error) = read_body_bounded(
+        stream,
+        content_length,
+        &mut body,
+        shutdown,
+        MAX_AUDIO_BYTES,
+        deadline,
+    ) {
+        return Err(match error {
+            BodyReadError::ResourceExhausted => Some(HttpResponse::code(413, "resource-exhausted")),
+            BodyReadError::Invalid => Some(HttpResponse::code(400, "invalid-audio")),
+            BodyReadError::Io(error) => {
+                tracing::debug!(%error, "audio upload stopped before completion");
+                Some(HttpResponse::code(400, "invalid-audio"))
+            }
+            BodyReadError::Deadline => Some(HttpResponse::code(408, "upload-timeout")),
+            BodyReadError::Shutdown => None,
+        });
+    }
+    crate::transcription::service::AudioClip::decode_wav(Cursor::new(body)).map_err(|error| {
+        Some(match error {
+            crate::transcription::service::AudioError::ResourceExhausted => {
+                HttpResponse::code(413, "resource-exhausted")
+            }
+            crate::transcription::service::AudioError::Unsupported => {
+                HttpResponse::code(415, "unsupported-audio")
+            }
+            crate::transcription::service::AudioError::Invalid => {
+                HttpResponse::code(400, "invalid-audio")
+            }
+        })
+    })
 }

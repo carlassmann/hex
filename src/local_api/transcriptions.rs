@@ -108,6 +108,33 @@ pub(super) fn transcribe_audio(
     }
 }
 
+/// Transcribes `clip` without timings for the remote listener; `Err(None)`
+/// means the client left or Hex is shutting down.
+pub(super) fn wait_for_transcript(
+    stream: &TcpStream,
+    selection: crate::transcription::models::TranscriptionSelection,
+    clip: crate::transcription::service::AudioClip,
+    admission: crate::transcription::service::AudioAdmission,
+    transcription: &crate::transcription::service::TranscriptionServiceHandle,
+    shutdown: &std::sync::atomic::AtomicBool,
+) -> std::result::Result<String, Option<HttpResponse>> {
+    let job = transcription
+        .transcribe(selection, clip, admission, TimestampLevel::None)
+        .map_err(|error| Some(transcription_error(error)))?;
+    loop {
+        match job.wait_timeout(TRANSCRIPTION_POLL_INTERVAL) {
+            Ok(Some(Ok(transcript))) => return Ok(transcript.text),
+            Ok(Some(Err(error))) | Err(error) => return Err(Some(transcription_error(error))),
+            Ok(None) => {
+                if shutdown.load(Ordering::Acquire) || client_aborted(stream) {
+                    job.cancel();
+                    return Err(None);
+                }
+            }
+        }
+    }
+}
+
 pub(super) fn transcription_error(
     error: crate::transcription::service::TranscriptionServiceError,
 ) -> HttpResponse {

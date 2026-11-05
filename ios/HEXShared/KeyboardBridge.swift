@@ -319,6 +319,9 @@ struct KeyboardBridge {
     private enum Key {
         static let command = "keyboard.command"
         static let modelInstalled = "model.installed"
+        static let transcriberName = "model.transcriberName"
+        static let transcriptionStatus = "dictation.transcriptionStatus"
+        static let pendingWords = "vocabulary.pendingWords"
         static let snapshot = "keyboard.snapshot"
         static let warmDuration = "settings.warmDuration"
         static let style = "settings.dictationStyle"
@@ -394,6 +397,18 @@ struct KeyboardBridge {
         }
     }
 
+    /// Where the current transcription is at ("cshed · rewriting · 0:07"), or nil.
+    var transcriptionStatus: String? {
+        get { defaults?.string(forKey: Key.transcriptionStatus) }
+        nonmutating set { defaults?.set(newValue, forKey: Key.transcriptionStatus) }
+    }
+
+    /// Where dictations are transcribed: a paired Hex's name, or nil for this iPhone.
+    var transcriberName: String? {
+        get { defaults?.string(forKey: Key.transcriberName) }
+        nonmutating set { defaults?.set(newValue, forKey: Key.transcriberName) }
+    }
+
     var returnAppID: String? {
         get {
             let value = defaults?.string(forKey: Key.returnAppID)
@@ -412,6 +427,7 @@ struct KeyboardBridge {
         HostAppCatalog.app(for: returnAppID)
     }
 
+
     /// The apps the keyboard offers to jump back to, in the user's order.
     var quickReturnApps: [HostApp] {
         get {
@@ -423,6 +439,23 @@ struct KeyboardBridge {
         nonmutating set {
             defaults?.set(newValue.map(\.id), forKey: Key.quickReturnAppIDs)
         }
+    }
+
+    /// Words the keyboard added to the word list that the app hasn't synced to the
+    /// paired Hex yet.
+    var pendingWords: [String] {
+        defaults?.stringArray(forKey: Key.pendingWords) ?? []
+    }
+
+    func queueWord(_ word: String) {
+        let queued = pendingWords
+        guard !queued.contains(where: { $0.caseInsensitiveCompare(word) == .orderedSame }) else { return }
+        defaults?.set(queued + [word], forKey: Key.pendingWords)
+    }
+
+    /// Drops the words that were synced, keeping any the keyboard queued meanwhile.
+    func removePendingWords(_ synced: [String]) {
+        defaults?.set(pendingWords.filter { !synced.contains($0) }, forKey: Key.pendingWords)
     }
 
     var allowBluetoothMic: Bool {

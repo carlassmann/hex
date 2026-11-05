@@ -58,6 +58,13 @@ final class KeyboardViewModel: ObservableObject {
     @Published var style: DictationStyle = .polished
     @Published var returnAppID: String?
     @Published var quickReturnApps: [HostApp] = HostAppCatalog.quickChips
+    /// The paired Hex that transcribes, or nil when this iPhone does.
+    @Published var transcriberName: String?
+    /// The containing app's "cshed · rewriting · 0:07" while it transcribes.
+    @Published var transcriptionStatus: String?
+    /// The selected text in the host field, when it could be a word-list entry.
+    @Published var selectedWord: String?
+    @Published var addedWord: String?
     @Published var activeTray: PickerTray = .none
 
     // Non-published live telemetry read directly by `DotScopeHostView` / button tap handlers
@@ -68,6 +75,7 @@ final class KeyboardViewModel: ObservableObject {
     var coldStartURL: URL = KeyboardLaunchRequest.startSession(requestedAt: nil, returnAppID: nil).url
     private(set) var pendingCommand: PendingCommand?
 
+    var onAddWord: ((String) -> Void)?
     var onDictateTap: (() -> Void)?
     var onStopTap: (() -> Void)?
     var onCancelTap: (() -> Void)?
@@ -583,9 +591,15 @@ struct KeyboardSurfaceView: View {
 
     private var topBar: some View {
         let p = palette
+        let showWordList = model.activeTray == .none
+            && model.hasFullAccess
+            && (model.selectedWord ?? model.addedWord) != nil
         return ZStack {
             defaultTopBar(palette: p)
-                .hexTrayReveal(model.activeTray == .none, reduceMotion: reduceMotion, offsetY: -3)
+                .hexTrayReveal(model.activeTray == .none && !showWordList, reduceMotion: reduceMotion, offsetY: -3)
+
+            wordListBar(palette: p)
+                .hexTrayReveal(showWordList, reduceMotion: reduceMotion, offsetY: 3.5)
 
             styleTrayBar(palette: p)
                 .hexTrayReveal(model.activeTray == .style, reduceMotion: reduceMotion, offsetY: 3.5)
@@ -620,6 +634,38 @@ struct KeyboardSurfaceView: View {
                 .hexTrayReveal(model.hasFullAccess, reduceMotion: reduceMotion, offsetY: 0)
         }
         .frame(height: 26)
+    }
+
+    @ViewBuilder
+    private func wordListBar(palette p: KeyboardChromePalette) -> some View {
+        if let word = model.selectedWord, word != model.addedWord {
+            Button {
+                model.onAddWord?(word)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "text.badge.plus")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Add “\(word)” to word list")
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(p.textBase)
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, minHeight: 26)
+                .background(p.chipIdleFill, in: Capsule())
+            }
+            .buttonStyle(.plain)
+        } else if let word = model.addedWord {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("“\(word)” is in your word list")
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(p.textMuted)
+            .frame(maxWidth: .infinity, minHeight: 26)
+        }
     }
 
     private func styleTrayBar(palette p: KeyboardChromePalette) -> some View {
@@ -676,6 +722,7 @@ struct KeyboardSurfaceView: View {
             && !model.isWarmAvailable
             && model.stagePhase != .recording
             && model.stagePhase != .transcribing
+        let showTranscriber = model.hasFullAccess && model.stagePhase == .transcribing
 
         return ZStack(alignment: .leading) {
             HStack(spacing: 6) {
@@ -695,6 +742,12 @@ struct KeyboardSurfaceView: View {
                 KeyboardRecordingClockText(clock: model.clock, color: p.textBase)
             }
             .hexTrayReveal(showRecordingClock, reduceMotion: reduceMotion, offsetY: 2)
+
+            Text(model.transcriptionStatus ?? "Transcribing on \(model.transcriberName ?? "iPhone")")
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(p.textMuted)
+                .lineLimit(1)
+                .hexTrayReveal(showTranscriber, reduceMotion: reduceMotion, offsetY: 2)
 
             Group {
                 if let message = model.statusMessage {

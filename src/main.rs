@@ -59,6 +59,7 @@ mod personal_commands;
 mod policy;
 #[cfg(target_os = "macos")]
 mod recognition;
+mod remote;
 mod rune_hud;
 mod rune_ui;
 #[cfg(all(target_os = "macos", hex_capture))]

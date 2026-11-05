@@ -689,6 +689,22 @@ pub(super) const SCENES: &[Scene] = &[
         ui.platform.developer = true;
         ui.pane = Pane::HudLab;
     }),
+    ("mac-labs-remote", |ui| {
+        *ui = mac_fixture();
+        ui.labs_open = true;
+        ui.settings.labs.remote_transcription = true;
+        super::remote::fixture(ui);
+    }),
+    ("mac-output-remote", |ui| {
+        *ui = mac_fixture();
+        output::fixture(ui);
+        ui.settings.labs.remote_transcription = true;
+        super::remote::fixture(ui);
+        if let Some(mirror) = ui.remote.mirror.as_mut() {
+            mirror.dictation_processing = ui.settings.dictation_processing.clone();
+        }
+        ui.pane = Pane::Output;
+    }),
     ("mac-labs", labs_with_some_on),
     // Where hex://labs/vocabulary-biasing lands: its group's chip.
     ("mac-labs-link", |ui| {

@@ -162,7 +162,8 @@ impl Feature {
             | Self::ApiTimestamps
             | Self::SpeakersOnly
             | Self::PauseMenu
-            | Self::MoreDictationShortcuts => Audience::Everyone,
+            | Self::MoreDictationShortcuts
+            | Self::RemoteTranscription => Audience::Everyone,
         }
     }
 
@@ -237,6 +238,7 @@ impl Feature {
             | Self::MeetingNotesFile
             | Self::MoreDictationShortcuts => 20261109,
             Self::AppModelSwitching | Self::ApiTimestamps | Self::PauseMenu => 20261110,
+            Self::RemoteTranscription => 20261111,
         }
     }
 
@@ -305,7 +307,8 @@ impl Feature {
             | Self::CapsLockDictation
             | Self::DoubleTapModifiers
             | Self::PauseMenu
-            | Self::MoreDictationShortcuts => cfg!(target_os = "macos"),
+            | Self::MoreDictationShortcuts
+            | Self::RemoteTranscription => cfg!(target_os = "macos"),
             Self::KeepOnClipboard | Self::CopyOnly => {
                 cfg!(any(target_os = "macos", target_os = "windows"))
             }
@@ -433,6 +436,7 @@ impl Feature {
             Self::ApiTimestamps => "api-timestamps",
             Self::SpeakersOnly => "speakers-only",
             Self::PauseMenu => "pause-menu",
+            Self::RemoteTranscription => "remote-transcription",
             Self::MoreDictationShortcuts => "more-dictation-shortcuts",
         }
     }
@@ -511,6 +515,7 @@ impl Feature {
             Self::ApiTimestamps => "labs.api_timestamps",
             Self::SpeakersOnly => "labs.speakers_only",
             Self::PauseMenu => "labs.pause_menu",
+            Self::RemoteTranscription => "labs.remote_transcription",
             Self::MoreDictationShortcuts => "labs.more_dictation_shortcuts",
         }
     }
@@ -593,6 +598,7 @@ impl Feature {
             Self::ApiTimestamps => settings.labs.api_timestamps,
             Self::SpeakersOnly => settings.labs.speakers_only,
             Self::PauseMenu => settings.labs.pause_menu,
+            Self::RemoteTranscription => settings.labs.remote_transcription,
             Self::MoreDictationShortcuts => settings.labs.more_dictation_shortcuts,
         }
     }
@@ -674,6 +680,7 @@ impl Feature {
             &mut labs.app_model_switching,
             &mut labs.pause_menu,
             &mut labs.more_dictation_shortcuts,
+            &mut labs.remote_transcription,
         ]
     }
 
@@ -758,6 +765,7 @@ impl Feature {
             Self::ApiTimestamps => settings.labs.api_timestamps = on,
             Self::SpeakersOnly => settings.labs.speakers_only = on,
             Self::PauseMenu => settings.labs.pause_menu = on,
+            Self::RemoteTranscription => settings.labs.remote_transcription = on,
             Self::MoreDictationShortcuts => settings.labs.more_dictation_shortcuts = on,
             // Off, no shortcut keeps a key only the feature allows.
             Self::StandaloneSpecialKeys => {
@@ -858,6 +866,9 @@ const PAUSE_MENU: u64 = APP_MODEL_SWITCHING << 1;
 /// The next bit above Pause from menu bar: the local API's
 /// `timestamps=segment|word` returns native timings.
 const API_TIMESTAMPS: u64 = PAUSE_MENU << 1;
+/// The next bit above Timestamps in API transcripts: dictations go to the
+/// connected Hex (macOS).
+const REMOTE_TRANSCRIPTION: u64 = API_TIMESTAMPS << 1;
 
 /// This process's `labs` switches: unknown until settings load or one is
 /// first read.
@@ -1083,6 +1094,11 @@ fn encode_where(settings: &LabsSettings, reaches: impl Fn(Feature) -> bool) -> u
         ),
         (Feature::SpeakersOnly, settings.speakers_only, SPEAKERS_ONLY),
         (Feature::PauseMenu, settings.pause_menu, PAUSE_MENU),
+        (
+            Feature::RemoteTranscription,
+            settings.remote_transcription,
+            REMOTE_TRANSCRIPTION,
+        ),
         (
             Feature::AppModelSwitching,
             settings.app_model_switching,
@@ -1743,6 +1759,18 @@ mod tests {
         assert!(Feature::SpeakersOnly.on_this_os());
         assert_eq!(Feature::SpeakersOnly.added(), 20261109);
         assert_eq!(Feature::SpeakersOnly.audience(), Audience::Everyone);
+    }
+
+    #[test]
+    fn remote_transcription_is_its_own_bit_and_off_by_default() {
+        let mut labs = LabsSettings::default();
+        assert_eq!(encode_where(&labs, |_| true) & REMOTE_TRANSCRIPTION, 0);
+        labs.remote_transcription = true;
+        labs.unload_idle_minutes = 24 * 60;
+        let state = encode_where(&labs, |_| true);
+        assert_ne!(state & REMOTE_TRANSCRIPTION, 0);
+        assert_eq!(state & API_TIMESTAMPS, 0);
+        assert_eq!((state >> MINUTES_SHIFT) & MINUTES_MASK, 24 * 60);
     }
 
     #[test]

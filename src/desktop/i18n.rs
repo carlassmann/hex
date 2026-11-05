@@ -15,6 +15,7 @@ mod labs;
 mod meetings;
 mod onboarding;
 mod portuguese;
+mod remote;
 mod russian;
 mod text_language;
 mod traditional_chinese;
@@ -349,6 +350,7 @@ pub(super) fn all_translations() -> impl Iterator<Item = &'static (&'static str,
         .chain(meetings::TRANSLATIONS)
         .chain(labs::TRANSLATIONS)
         .chain(failures::TRANSLATIONS)
+        .chain(remote::TRANSLATIONS)
         .chain(onboarding::TRANSLATIONS)
 }
 

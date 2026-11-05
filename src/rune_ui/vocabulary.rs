@@ -140,7 +140,10 @@ pub(super) fn summary(ui: &Ui) -> String {
 /// none (Parakeet biases toward it; Whisper and Qwen3-ASR read it as a
 /// prompt).
 pub(super) fn unused_note(ui: &Ui) -> Option<String> {
-    let model = crate::transcription::models::definition(ui.settings.transcription.model);
+    // The paired Hex's model reads the list while the window edits its.
+    let selection = super::remote_edit::mirror(ui, &ui.settings)
+        .map_or(&ui.settings.transcription, |mirror| &mirror.transcription);
+    let model = crate::transcription::models::definition(selection.model);
     (!model.uses_vocabulary()).then(|| {
         tr_fill(
             "{} doesn't use these terms; rewriting and search still do",

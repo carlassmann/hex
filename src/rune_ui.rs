@@ -54,6 +54,8 @@ mod platform;
 mod platform_settings;
 pub(crate) mod playground;
 mod practice;
+mod remote;
+mod remote_edit;
 mod scenes;
 #[cfg(hex_capture)]
 mod scrawl;
@@ -679,6 +681,8 @@ pub(crate) struct Ui {
     picker: picker::Picker,
     /// Speech models already on this computer, and choosing one.
     found: found::FoundState,
+    /// Labs' remote machines: the one this Mac sends to, and paired devices.
+    remote: remote::RemoteState,
     explainer: explainer::Explainer,
     sound_sets: sound_sets::SoundSets,
     tour: Option<onboarding::Tour>,
@@ -796,6 +800,7 @@ impl Ui {
             output: output::OutputPane::default(),
             picker: picker::Picker::default(),
             found: found::FoundState::default(),
+            remote: remote::RemoteState::default(),
             explainer: explainer::Explainer::default(),
             sound_sets: sound_sets::SoundSets::default(),
             tour: None,
@@ -855,9 +860,10 @@ impl Ui {
     }
 
     fn commit(&mut self, candidate: AppSettings) -> bool {
+        let (saved, remote) = remote_edit::split(self, &candidate);
         match &mut self.service {
             Service::Live(backend) => {
-                if let Err(error) = backend.save(&candidate) {
+                if let Err(error) = backend.save(&saved) {
                     self.error = Some(format!("{error:#}"));
                     return false;
                 }
@@ -866,6 +872,7 @@ impl Ui {
             Service::Pending(_) => {}
         }
         self.error = None;
+        remote_edit::send(self, remote, &candidate);
         self.settings = candidate;
         self.draft_since = None;
         self.settings_changed();
@@ -1061,6 +1068,13 @@ impl Ui {
         if self.service_settings.as_ref() == Some(&service) {
             return false;
         }
+        let changed = self.show(remote_edit::shown(self, service.clone()));
+        self.service_settings = Some(service);
+        changed
+    }
+
+    /// Shows `service` (as `remote_edit` shows it), keeping unsaved typing.
+    fn show(&mut self, service: AppSettings) -> bool {
         let changed = service != self.settings;
         if changed {
             let drafts = self.drafts();
@@ -1070,10 +1084,9 @@ impl Ui {
             if !drafts.vocabulary && service.vocabulary != self.settings.vocabulary {
                 self.vocabulary.reload(&service.vocabulary);
             }
-            self.settings = service.clone();
+            self.settings = service;
             self.settings_changed();
         }
-        self.service_settings = Some(service);
         changed
     }
 
@@ -1291,6 +1304,7 @@ fn poll(ui: &mut Ui, clock: f64, tx: &mut Tx) -> bool {
     changed |= model_import::poll(ui);
     changed |= meetings::poll_import(ui);
     changed |= found::poll(ui);
+    changed |= remote::poll(ui, clock);
     let login_unknown = ui.platform.login_item.is_none();
     changed |= settings::poll_microphones(ui);
     // General names the input in use; list again when the OS reports an

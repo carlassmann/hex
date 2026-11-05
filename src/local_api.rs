@@ -1021,6 +1021,9 @@ fn control(
     if let Err(error) = crate::control::check_version(&request) {
         return HttpResponse::json(200, &ControlResponse::from(ControlReply::from(error)));
     }
+    if let Some(reply) = remote::forwarded(&request.command) {
+        return HttpResponse::json(200, &ControlResponse::from(reply));
+    }
     let Some(controls) = controls else {
         return HttpResponse::code(404, "control-unavailable");
     };

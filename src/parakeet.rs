@@ -113,7 +113,7 @@ struct InferenceJob {
     job_id: DictationJobId,
     control: Arc<JobControl>,
     submitted_at: Instant,
-    transcript: PendingTranscript,
+    transcript: JobTranscript,
     audio_ms: u64,
     prepare_ms: u128,
     target: TranscriptionTarget,
@@ -137,6 +137,8 @@ struct ProcessorJob {
     language: String,
     timings: JobTimings,
     recording: Option<crate::history::Recording>,
+    /// The connected Hex's processed text; `text` is then its raw transcript.
+    remote: Option<crate::dictation::processor::Processed>,
 }
 
 /// Pipeline timings carried from inference through output for the final log.
@@ -319,6 +321,13 @@ impl DictationWorker {
                     let events = event_sender.clone();
                     let _ = engine.run(move |model| {
                         prioritize_inference_thread();
+                        if let Some(connection) = crate::remote::client::active() {
+                            tracing::info!(
+                                machine = connection.machine_label,
+                                "remote transcription is on; the speech model loads only for a fallback"
+                            );
+                            return;
+                        }
                         match WarmTranscriber::load() {
                             Ok(loaded) => {
                                 tracing::info!("transcription model loaded");
@@ -451,6 +460,12 @@ impl DictationWorker {
             TranscriptionTarget::Service => None,
             _ => crate::history::Recording::keep(&samples),
         };
+        let remote = matches!(
+            target,
+            TranscriptionTarget::Paste | TranscriptionTarget::Print
+        )
+        .then(crate::remote::client::active)
+        .flatten();
         let prepare_ms = submitted_at.elapsed().as_millis();
         let offline = {
             let control = control.clone();
@@ -467,9 +482,23 @@ impl DictationWorker {
                     .map_err(|error| error.to_string())
             })
         };
-        let transcript = engine
-            .finish_with(stream, samples, offline)
-            .map_err(|_| "dictation worker is unavailable")?;
+        let transcript = match remote {
+            Some(connection) => {
+                // Dropping a live stream cancels it; the clip goes as a whole.
+                drop(stream);
+                JobTranscript::Remote {
+                    connection,
+                    samples,
+                    engine: engine.clone(),
+                    offline,
+                }
+            }
+            None => JobTranscript::Local(
+                engine
+                    .finish_with(stream, samples, offline)
+                    .map_err(|_| "dictation worker is unavailable")?,
+            ),
+        };
         jobs.try_send(InferenceJob {
             job_id,
             control: control.clone(),
@@ -631,18 +660,26 @@ fn run_processor_worker(
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .recv();
-        let Ok(job) = job else { break };
+        let Ok(mut job) = job else { break };
         if job.control.is_cancelled() {
             let _ = output.send(OutputJob::Cancelled { job_id: job.job_id });
             continue;
         }
-        let mut processed =
-            process_job_text(&job, crate::dictation::config::dictation_profiles, || {
-                let _ = events.send(WorkerEvent::Stage {
-                    job_id: job.job_id,
-                    stage: DictationJobStage::Processing,
-                });
+        let processing = || {
+            let _ = events.send(WorkerEvent::Stage {
+                job_id: job.job_id,
+                stage: DictationJobStage::Processing,
             });
+        };
+        let raw = job.text.clone();
+        let mut processed = match job.remote.take() {
+            Some(remote) => remote,
+            None => process_job_text(
+                &job,
+                crate::dictation::config::dictation_profiles,
+                processing,
+            ),
+        };
         processed.apply_transformations(
             transformations,
             &job.context,
@@ -669,7 +706,7 @@ fn run_processor_worker(
                 target: job.target,
                 result: Box::new(Ok(CompletedTranscript {
                     text: processed.text,
-                    raw: job.text,
+                    raw,
                     application: job.context.application,
                     return_to: job.return_to,
                     timings: job.timings,
@@ -683,6 +720,9 @@ fn run_processor_worker(
         }
     }
 }
+
+/// The connected Hex's processed text and raw transcript, or `None` to
+/// transcribe and process the clip here instead.
 
 /// Select processing when the worker reaches the job; the stage precedes processing.
 fn process_job_text(
@@ -730,6 +770,13 @@ pub fn transcribe_with_words(
         return Ok(crate::transcription::Transcript::default());
     }
     transcribe_in_chunks(samples, WORD_CHUNK_SAMPLES, |chunk| {
+        // Labs › Remote transcription: the paired Hex transcribes, and this
+        // Mac loads a model only when it can't.
+        if let Some(connection) = crate::remote::client::timed_active()
+            && let Ok(transcript) = crate::remote::client::transcribe_timed(&connection, &chunk)
+        {
+            return Ok(transcript);
+        }
         wait_for_dictation_idle()?;
         let selection = selection.clone();
         let (send, transcript) = mpsc::sync_channel(1);
@@ -829,26 +876,8 @@ fn run_inference_worker(
         let queue_ms = total_started.elapsed().as_millis();
         let inference_started = Instant::now();
         let audio_ms = job.audio_ms;
-        let result = job.transcript.wait().map(|transcribed| {
-            tracing::info!(
-                source = transcribed.source.label(),
-                finish_ms = transcribed.finish_ms,
-                audio_ms,
-                "transcribed dictation"
-            );
-            let text = transcribed.text;
-            let corrected = if matches!(job.target, TranscriptionTarget::Service) {
-                text.clone()
-            } else {
-                text.trim().to_string()
-            };
-            tracing::debug!(
-                raw_transcript = text,
-                corrected_transcript = corrected,
-                "prepared local transcript"
-            );
-            corrected
-        });
+        let target = job.target;
+        let (result, remote) = job.transcript.wait(target, audio_ms, &job.context);
         let timings = JobTimings {
             total_started,
             queue_ms,
@@ -860,7 +889,6 @@ fn run_inference_worker(
             let _ = output.send(OutputJob::Cancelled { job_id: job.job_id });
             continue;
         }
-        let target = job.target;
         match result {
             Ok(text)
                 if matches!(
@@ -881,6 +909,7 @@ fn run_inference_worker(
                         language: job.language,
                         timings,
                         recording: job.recording,
+                        remote,
                     })
                     .is_err()
                 {
@@ -1467,6 +1496,7 @@ mod tests {
                 inference_ms: 0,
             },
             recording: None,
+            remote: None,
         }
     }
 
@@ -2020,6 +2050,9 @@ mod tests {
         );
     }
 }
+
+mod remote;
+use remote::JobTranscript;
 
 #[cfg(test)]
 #[path = "dictation/tail_tests.rs"]

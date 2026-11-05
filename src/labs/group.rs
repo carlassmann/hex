@@ -60,6 +60,7 @@ impl Feature {
             | Self::SkipPauses
             | Self::VoiceFilter
             | Self::HideMenuBarIcon
+            | Self::RemoteTranscription
             | Self::QuitClosesWindow
             | Self::SettingsSearch
             | Self::Appearance

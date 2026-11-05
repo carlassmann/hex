@@ -343,3 +343,10 @@ pub fn unload_idle() -> Option<std::time::Duration> {
     (state & UNLOAD_IDLE != 0)
         .then(|| std::time::Duration::from_secs(((state >> MINUTES_SHIFT) & MINUTES_MASK) * 60))
 }
+
+/// Dictations go to the Hex this one is connected to (macOS; read as each
+/// dictation is submitted).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn remote_transcription() -> bool {
+    on(REMOTE_TRANSCRIPTION) && Feature::RemoteTranscription.on_this_os()
+}

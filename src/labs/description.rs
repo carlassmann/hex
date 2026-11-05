@@ -184,6 +184,9 @@ impl Feature {
             Self::OpenCodeInWsl => {
                 "Use an OpenCode service running in your default WSL distribution for Modes rewriting and the Modes model picker; looking for it can start WSL"
             }
+            Self::RemoteTranscription => {
+                "Send dictations to another Hex, which transcribes them and runs its Output steps. When it can't be reached, this Mac does"
+            }
             Self::TranscribeFiles => {
                 "Turn a WAV recording into text with hex transcribe <file> and your dictation model"
             }

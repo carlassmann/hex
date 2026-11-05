@@ -628,6 +628,11 @@ pub(super) const KEYS: &[Key] = &[
          Resume; a restart starts unpaused (macOS)",
     ),
     key(
+        "labs.remote_transcription",
+        Kind::Bool,
+        "Labs: send dictations to the Hex connected with hex remote connect, which transcribes them and runs its Output steps; this Mac transcribes when it can't be reached (macOS)",
+    ),
+    key(
         "meetings.enabled",
         Kind::Bool,
         "Labs: Meetings (beta), call detection, recording, and transcripts",

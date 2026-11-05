@@ -1094,8 +1094,10 @@ impl Owner {
             ),
             CaptureKind::Programmatic => self.capture.start_programmatic_at(at),
         }
-        // Only hotkey captures stream; programmatic ones need no speed-up.
-        self.stream_capture = matches!(kind, CaptureKind::Hotkey);
+        // Only hotkey captures stream; programmatic ones need no speed-up,
+        // and with Labs › Remote transcription another Hex transcribes.
+        self.stream_capture =
+            matches!(kind, CaptureKind::Hotkey) && !crate::labs::remote_transcription();
         self.keep_on_loss = matches!(kind, CaptureKind::Programmatic);
     }
 

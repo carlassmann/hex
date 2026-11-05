@@ -288,6 +288,7 @@ pub fn run(shutdown: &'static AtomicBool, listener: ListenerConfig, hidden: bool
     crate::keyboard::initialize_layout()?;
     crate::updater::finish_on_launch();
     let _ = UPDATER.set(crate::updater::Updater::start());
+    crate::remote::settings::start_refreshing();
     // Never a silent launch failure: invalid settings start with defaults
     // and the window says why (#744).
     let launch = AppSettings::load_for_launch();

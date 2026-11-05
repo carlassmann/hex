@@ -111,6 +111,7 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 ├── Pause from menu bar no labs.pause_menu             (macOS) the menu bar's action block offers Pause Hex; while paused every capture shortcut and the secure-input hotkeys are inert, the event tap passes keys through, and Resume waits for a neutral keyboard (#82)
 ├── ⌘Q closes Settings no labs.quit_closes_window      (macOS) the app menu's Quit Hex (⌘Q) closes the Settings window instead of quitting Hex; dictation keeps running, the menu bar icon still quits (#1473)
 ├── Notch indicator no    labs.notch_indicator         (macOS) on a screen with a notch, the HUD widens the notch sideways in the Dynamic Island's compact style at either visible position: an orange mic and level bars, the macOS spinner, a green checkmark; Hidden still hides it, and flat screens keep the Top/Bottom setting
+├── Remote transcription no labs.remote_transcription (macOS) dictations go to the paired Hex, which transcribes them and runs its Modes; meeting chunks and Annotate words go there raw; this Mac transcribes when it can't be reached
 ├── Movable meeting capsules no labs.movable_meeting_capsules (macOS) panel capsules (Meeting transcript ready, Recording automatically, offers, reminders) drag to another corner and show in the last one, shared with the recording capsule (#1093)
 ├── Vocabulary in meeting notes no labs.meeting_notes_vocabulary (every OS with Meetings)
 │                                        final meeting titles and summaries (and Regenerate summary) read the vocabulary ahead of the transcript (#1154)
@@ -2028,6 +2029,122 @@ after it. Details, checks, and live macOS 27.0 measurements:
 [capture.md](capture.md) (`capture.replay`) and
 `annotate_replay_is_its_own_bit_and_off_by_default` in [labs.rs](../../src/labs.rs).
 The row renders only on macOS 27+, so Linux goldens don't change.
+
+Remote transcription (`remote-transcription`, macOS only): for sharing one
+model and one Output pipeline between a Mac, a phone, and the machine that
+serves them (`hex remote pair` there, `local_api::remote`). `hex remote
+connect <address> <code>` (every OS) trades that machine's one-time code for a
+device token in `remote-client.json` (0600, never `settings.json`); `hex remote
+disconnect` forgets it and `hex remote send <wav> [--app <name>]` sends a file
+and prints the text. With the lab on and a connection saved:
+
+```ts
+Hex starts with the lab on and a connection -> no speech model loads
+Hotkey capture             -> no live stream (lab on, asked at capture start)
+Paste or Print dictation finishes
+└── inference worker       -> POST /remote/dictations?progress=1 (WAV, X-Hex-Application: frontmost app)
+    ├── done               -> its text pastes; History raw is its transcript; no local Modes or transformations
+    └── failed, unreachable, or past 30 s (+10 s per minute of audio)
+                           -> this Mac's model loads (first time) and transcribes the clip, then its Modes
+```
+
+Meeting chunks and Annotate words go to the same machine, raw:
+
+```ts
+Meeting chunk with speech (`ChunkModel::transcribe`, meeting/transcript.rs)
+Annotate words, per 30 s chunk (`parakeet::transcribe_with_words`)
+└── POST /remote/transcriptions (WAV) -> its raw transcript with segment and word times, no Modes
+    └── failed or unreachable (5 s connect, 30 s total)
+                           -> this Mac transcribes (its model loads the first time),
+                              and stays local for 60 s before trying again
+```
+
+So a fallback's text matches what the other Hex would make, the Mac keeps a
+read-only copy of its Modes, vocabulary, and boost (`GET /remote/settings`,
+[remote/settings.rs](../../src/remote/settings.rs), `remote-settings.json`
+0600, refreshed on connect and every 5 min while the lab is on):
+
+```ts
+lab on and the copy is the connected machine's -> AppSettings::apply_runtime uses its Modes,
+                                                   vocabulary, and boost; settings.json untouched
+lab off, disconnected, or no copy yet           -> this Mac's own
+models differ                                   -> Labs' connection row says which, in the warning colour
+```
+
+The model is not copied (it may not be installed here) and transformation
+scripts are not either: a Mode naming one this Mac's `hex.config.ts` lacks
+keeps its input, as any failed transformation does. Checks:
+`served_settings_read_back_the_same` in remote/settings.rs.
+
+While the lab is on and the copy is the connected machine's, those
+settings are edited there, not here
+([rune_ui/remote_edit.rs](../../src/rune_ui/remote_edit.rs)):
+
+```ts
+Output pane, Vocabulary sheet, vocabulary boost
+├── shows the copy, under "Editing <machine>'s steps"; Open file is hidden
+└── an edit -> shown at once; settings.json keeps this Mac's own values
+    └── one worker sends it as hex commands: POST /remote/control
+        (dictation_processing.default_mode / .modes, vocabulary_boost,
+        vocabulary add/remove), then reads the copy again
+        └── refused or unreachable -> the window's error, and the copy shows again
+hex settings get|set|apply (dictation_processing*, vocabulary_boost) and hex vocabulary
+└── the local API's /control forwards them the same way; replies end "(on <machine>)",
+    an unreachable machine answers remote-unreachable
+Edit with agent / Fix this -> the prompt says the steps live on <machine> and to
+                              change them with those hex commands
+lab off -> the window shows this Mac's own again
+```
+
+The serving machine refuses every other command (403) and runs these
+through its control host, as a local `hex` command would
+(`local_api/remote/edits.rs`). Checks: `vocabulary_edits_become_removes_then_adds`,
+`changed_steps_are_set_whole`, and
+`the_window_edits_the_mirror_and_saves_this_macs_own` in remote_edit.rs;
+the `mac-output-remote` scene.
+
+The serving machine runs each clip as one foreground request on its
+dictation engine (`local_api/remote/timed.rs`), refuses clips over 60 s
+(413), and answers 503 without an engine. It does not journal them.
+
+The gate, `remote::client::active()`, is read as each dictation is submitted
+(`DictationWorker::submit` in [parakeet.rs](../../src/parakeet.rs)); raw
+dictations and the local API's host audio stay local. The serving machine
+journals these like a phone's dictations (`HEX_REMOTE_JOURNAL`). Checks:
+`remote_transcription_is_its_own_bit_and_off_by_default` in
+[labs.rs](../../src/labs.rs); the WAV, header, and progress-line tests in
+[remote/client.rs](../../src/remote/client.rs). Observed: `hex remote connect`
+and `hex remote send` from Linux against a Linux Hex over its tailnet HTTPS
+address (a 2 s clip in about 1 s, 30 s in about 5.5 s, journaled with the
+`--app` name). Observed on a Mac
+(c2b001d9, unbundled release binary): `hex remote send` (8.8 s clip in about
+1.7 s), `hex dictation stop --print` and a paste into TextEdit with cshed's
+text (History profile `remote: cshed`), and the fallback with an unreachable
+address; with the lab on Hex started without loading a model (159 MB
+resident against 284 MB) and the fallback loaded it once. Not yet observed:
+the skipped live stream of a shortcut dictation, and meetings or Annotate
+over `/remote/transcriptions`.
+
+Remote machines in the window
+([rune_ui/remote.rs](../../src/rune_ui/remote.rs)), read only by a live window
+while Labs or Output shows, with the devices read again every 3 s:
+
+```ts
+Labs › Remote transcription on (macOS)
+├── not connected  -> Connect to: address or pasted pair link + code -> Connect (off the UI thread)
+└── connected      -> Sends to <machine> (its URL) · Disconnect
+Labs › Remote devices (every OS)
+├── Pair a device  -> serving on (restart note if it was off), one-time code, address
+│                     (Tailscale name looked up off the UI thread), QR of the pair link · Done
+└── each paired device -> Revoke
+Output, lab on and connected -> "<machine> runs these steps" note
+```
+
+Checks: `a_pasted_pair_link_carries_the_address_and_code`, the
+`mac-labs-remote` scene (its connection row renders only in macOS builds),
+and `mac-labs-link`'s goldens. Observed: the scene's QR decodes with
+`zbarimg` in both appearances. Not yet observed: connecting, pairing, and
+revoking from a live window.
 
 Movable meeting capsules (`movable-meeting-capsules`, issue 1093, macOS
 like Meetings; its row shows wherever Meetings does, in macOS builds): for

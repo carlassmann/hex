@@ -407,12 +407,12 @@ fn release_notes_link(ui: &Ui, p: Paint) -> Option<El> {
     )
 }
 
-/// A local or test build marks itself beside the version, quietly: an outline
-/// pill with a dot, in muted theme tokens.
+/// A test build marks itself beside the version, quietly: an outline pill
+/// with a dot, in muted theme tokens. A local build's version and status
+/// line already say so, and a pill beside them overflows the sidebar.
 fn version_line(ui: &Ui, p: Paint, version: El) -> El {
     let badge = match ui.build_preview.unwrap_or_else(build_kind) {
-        BuildKind::Release => return version,
-        BuildKind::Local => tr("Local"),
+        BuildKind::Release | BuildKind::Local => return version,
         BuildKind::Test => tr("Test"),
     };
     let c = &p.k.c;

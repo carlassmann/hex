@@ -741,6 +741,13 @@ impl ChunkModel {
         if speechless(samples) {
             return Ok(Chunked::Done(Transcript::default()));
         }
+        // Labs › Remote transcription: the paired Hex transcribes, and this
+        // Mac loads a model only when it can't.
+        if let Some(connection) = crate::remote::client::timed_active()
+            && let Ok(transcript) = crate::remote::client::transcribe_timed(&connection, samples)
+        {
+            return Ok(Chunked::Done(transcript));
+        }
         let engine = crate::transcription::engine::TranscriptionEngine::shared();
         if let Some(engine) = &engine
             && let Some(result) = Self::transcribe_shared(engine, samples)

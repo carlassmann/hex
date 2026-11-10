@@ -19,11 +19,20 @@ pub fn applies_to(language: &str) -> bool {
 /// `transcript` without its filler words when the Labs switch is `enabled`
 /// and the dictation is English; `None` leaves the caller's text untouched.
 pub fn strip_if(transcript: &str, language: &str, enabled: bool) -> Option<String> {
+    if enabled && language == "de" {
+        let stripped = super::english_sentences::strip_fillers(transcript);
+        return (stripped != transcript).then_some(stripped);
+    }
     (enabled && applies_to(language)).then(|| apply(transcript))
 }
 
 /// `transcript` without its filler words.
 pub fn apply(transcript: &str) -> String {
+    apply_words(transcript, FILLERS)
+}
+
+/// `transcript` without `fillers`, each lowercase.
+pub fn apply_words(transcript: &str, fillers: &[&str]) -> String {
     let chars: Vec<char> = transcript.chars().collect();
     let mut out = String::with_capacity(transcript.len());
     // A filler was just removed: the next text decides the spacing.
@@ -31,7 +40,7 @@ pub fn apply(transcript: &str) -> String {
     let mut capitalize = false;
     let mut index = 0;
     while index < chars.len() {
-        if let Some(end) = filler_at(&chars, index) {
+        if let Some(end) = filler_at(&chars, index, fillers) {
             trim_end(&mut out, &[]);
             if !removed {
                 capitalize = chars[index].is_uppercase() && sentence_start(&out);
@@ -87,11 +96,11 @@ fn joins_word(c: char) -> bool {
 }
 
 /// Where the filler starting at `start` ends, if one does.
-fn filler_at(chars: &[char], start: usize) -> Option<usize> {
+fn filler_at(chars: &[char], start: usize, fillers: &[&str]) -> Option<usize> {
     if start > 0 && joins_word(chars[start - 1]) {
         return None;
     }
-    FILLERS.iter().find_map(|word| {
+    fillers.iter().find_map(|word| {
         let end = start + word.len();
         let candidate = chars.get(start..end)?;
         let matches =

@@ -8,6 +8,7 @@ pub(crate) mod config;
 pub(crate) mod context;
 #[cfg(target_os = "macos")]
 pub(crate) mod diagnostics;
+pub(crate) mod english_sentences;
 pub(crate) mod filler_words;
 pub(crate) mod indicator;
 pub(crate) mod live_text;

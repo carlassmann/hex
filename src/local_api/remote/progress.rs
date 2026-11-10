@@ -34,6 +34,7 @@ use serde_json::{Value, json};
 
 use super::super::{HttpContext, generate_token, write_stream_headers};
 use super::journal::{self, Entry, Rewrite};
+use crate::transcription::models::TranscriptionSelection;
 use crate::transcription::service::{AudioClip, TranscriptionServiceError};
 use crate::transcription::stream::{CreateError, End, PushError, SampleFormat, Segment, Stream};
 
@@ -137,6 +138,12 @@ pub(super) fn finish_stream(
                 _ => (streamed, segments),
             },
         );
+    let transcript = transcript.map(|(raw, segments)| {
+        match in_expected_script(&mut progress, &raw, &audio, context) {
+            Some(retried) => (retried, Vec::new()),
+            None => (raw, segments),
+        }
+    });
     if journal::retention().is_some() {
         entry.audio = audio;
     }
@@ -196,18 +203,19 @@ pub(super) fn dictate(
         return;
     };
     let audio_ms = clip.duration_ms;
+    let samples = clip.samples().to_vec();
     let mut entry = Entry {
         route: "upload",
         application: application.clone(),
         audio_ms,
         audio: journal::retention()
-            .map(|_| clip.samples().to_vec())
+            .map(|_| samples.clone())
             .unwrap_or_default(),
         ..Entry::default()
     };
     progress.send(json!({ "stage": "received", "durationMs": audio_ms }));
     let transcribing = Instant::now();
-    let whole = whole_clip(&mut progress, clip.samples().to_vec());
+    let whole = whole_clip(&mut progress, samples.clone());
     let (route, raw) = match whole {
         Some(raw) => ("whole", Ok(raw)),
         None => match start_stream(context) {
@@ -218,7 +226,12 @@ pub(super) fn dictate(
                     .map(|(raw, _)| raw)
                     .inspect_err(|_| stream.cancel()),
             ),
-            None => ("service", wait_for_service(&mut progress, clip, context)),
+            None => (
+                "service",
+                current_selection().and_then(|selection| {
+                    wait_for_service(&mut progress, selection, clip, context)
+                }),
+            ),
         },
     };
     let raw = match raw {
@@ -230,6 +243,7 @@ pub(super) fn dictate(
             return progress.fail(failure.code, &failure.message);
         }
     };
+    let raw = in_expected_script(&mut progress, &raw, &samples, context).unwrap_or(raw);
     entry.transcribe_ms = transcribing.elapsed().as_millis() as u64;
     entry.raw = raw.clone();
     let Some(rewritten) = rewrite(&mut progress, &raw, application) else {
@@ -427,12 +441,10 @@ fn wait_for_stream(
 /// start (another one is live, or the engine holds no GGUF model).
 fn wait_for_service(
     progress: &mut Progress,
+    selection: TranscriptionSelection,
     clip: AudioClip,
     context: &HttpContext,
 ) -> Result<String, Failure> {
-    let settings = crate::app_settings::AppSettings::load()
-        .map_err(|_| Failure::new("settings-unavailable", "Hex could not read its settings"))?;
-    let selection = settings.transcription;
     if !super::super::model_ready(&selection) {
         return Err(Failure::new(
             "model-not-ready",
@@ -472,6 +484,38 @@ fn wait_for_service(
             }
         }
     }
+}
+
+fn current_selection() -> Result<TranscriptionSelection, Failure> {
+    crate::app_settings::AppSettings::load()
+        .map(|settings| settings.transcription)
+        .map_err(|_| Failure::new("settings-unavailable", "Hex could not read its settings"))
+}
+
+/// `raw` heard again by another model when it came out in a script its
+/// language never writes ([`super::wrong_script`]); `None` keeps `raw`.
+fn in_expected_script(
+    progress: &mut Progress,
+    raw: &str,
+    samples: &[f32],
+    context: &HttpContext,
+) -> Option<String> {
+    let selection = current_selection().ok()?;
+    let retry = super::wrong_script::retry_selection(raw, &selection)?;
+    let clip = super::wrong_script::clip(samples)?;
+    let started = Instant::now();
+    let retried = wait_for_service(progress, retry, clip, context)
+        .inspect_err(|failure| {
+            tracing::warn!(code = failure.code, message = %failure.message, "the wrong-script retry failed");
+        })
+        .ok()
+        .and_then(|retried| super::wrong_script::accept(&retried));
+    tracing::info!(
+        retry_ms = started.elapsed().as_millis() as u64,
+        replaced = retried.is_some(),
+        "heard a Cyrillic transcript again"
+    );
+    retried
 }
 
 fn service_failure(error: TranscriptionServiceError) -> Failure {

@@ -2048,6 +2048,19 @@ Paste or Print dictation finishes
                            -> this Mac's model loads (first time) and transcribes the clip, then its Modes
 ```
 
+On the serving machine, a transcript in Cyrillic while its language setting
+is Latin-script (Parakeet v3 writes some short English phrases that way) is
+heard again once by Cohere Transcribe, when installed
+(`local_api/remote/wrong_script.rs`):
+
+```ts
+Remote transcript has Cyrillic, language not ru/uk/bg/be/sr/mk/kk/auto
+└── Cohere Transcribe (transcription service, same language)
+    ├── non-empty, no Cyrillic -> replaces the transcript (stream pieces dropped)
+    └── otherwise or failed    -> the original transcript stays
+```
+Checks: `wrong_script` unit tests. Not yet proven end to end on a device.
+
 Meeting chunks and Annotate words go to the same machine, raw:
 
 ```ts

@@ -47,9 +47,9 @@ mod edits;
 pub(super) use edits::forwarded;
 mod journal;
 mod progress;
+mod retry;
 mod rewrite;
 mod timed;
-mod wrong_script;
 
 /// The remote listener for paired devices; Hex runs on without it.
 pub(super) fn start_listener(context: Arc<HttpContext>) -> Option<JoinHandle<()>> {

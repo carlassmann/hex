@@ -138,12 +138,13 @@ pub(super) fn finish_stream(
                 _ => (streamed, segments),
             },
         );
-    let transcript = transcript.map(|(raw, segments)| {
-        match in_expected_script(&mut progress, &raw, &audio, context) {
-            Some(retried) => (retried, Vec::new()),
-            None => (raw, segments),
-        }
-    });
+    let transcript =
+        transcript.map(
+            |(raw, segments)| match heard_again(&mut progress, &raw, &audio, context) {
+                Some(retried) => (retried, Vec::new()),
+                None => (raw, segments),
+            },
+        );
     if journal::retention().is_some() {
         entry.audio = audio;
     }
@@ -243,7 +244,7 @@ pub(super) fn dictate(
             return progress.fail(failure.code, &failure.message);
         }
     };
-    let raw = in_expected_script(&mut progress, &raw, &samples, context).unwrap_or(raw);
+    let raw = heard_again(&mut progress, &raw, &samples, context).unwrap_or(raw);
     entry.transcribe_ms = transcribing.elapsed().as_millis() as u64;
     entry.raw = raw.clone();
     let Some(rewritten) = rewrite(&mut progress, &raw, application) else {
@@ -493,27 +494,30 @@ fn current_selection() -> Result<TranscriptionSelection, Failure> {
 }
 
 /// `raw` heard again by another model when it came out in a script its
-/// language never writes ([`super::wrong_script`]); `None` keeps `raw`.
-fn in_expected_script(
+/// language never writes or empty despite speech ([`super::retry`]); `None`
+/// keeps `raw`.
+fn heard_again(
     progress: &mut Progress,
     raw: &str,
     samples: &[f32],
     context: &HttpContext,
 ) -> Option<String> {
     let selection = current_selection().ok()?;
-    let retry = super::wrong_script::retry_selection(raw, &selection)?;
-    let clip = super::wrong_script::clip(samples)?;
+    let reason = super::retry::reason(raw, samples, &selection)?;
+    let retry = super::retry::retry_selection(&selection)?;
+    let clip = super::retry::clip(samples)?;
     let started = Instant::now();
     let retried = wait_for_service(progress, retry, clip, context)
         .inspect_err(|failure| {
-            tracing::warn!(code = failure.code, message = %failure.message, "the wrong-script retry failed");
+            tracing::warn!(code = failure.code, message = %failure.message, "the retry failed");
         })
         .ok()
-        .and_then(|retried| super::wrong_script::accept(&retried));
+        .and_then(|retried| super::retry::accept(&retried, &selection.language));
     tracing::info!(
+        reason = reason.label(),
         retry_ms = started.elapsed().as_millis() as u64,
         replaced = retried.is_some(),
-        "heard a Cyrillic transcript again"
+        "heard a transcript again"
     );
     retried
 }

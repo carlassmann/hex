@@ -2054,17 +2054,20 @@ Paste or Print dictation finishes
 ```
 
 On the serving machine, a transcript in Cyrillic while its language setting
-is Latin-script (Parakeet v3 writes some short English phrases that way) is
-heard again once by Cohere Transcribe, when installed
-(`local_api/remote/wrong_script.rs`):
+is Latin-script (Parakeet v3 writes some short English phrases that way), or
+an empty one of a recording loud enough to hold speech (RMS over 0.015;
+Parakeet misses some short replies), is heard again once by Cohere
+Transcribe, when installed (`local_api/remote/retry.rs`). Quiet recordings
+are never retried, since Cohere makes up text for silence:
 
 ```ts
 Remote transcript has Cyrillic, language not ru/uk/bg/be/sr/mk/kk/auto
+  or is empty, recording RMS > 0.015
 └── Cohere Transcribe (transcription service, same language)
-    ├── non-empty, no Cyrillic -> replaces the transcript (stream pieces dropped)
-    └── otherwise or failed    -> the original transcript stays
+    ├── non-empty, right script -> replaces the transcript (stream pieces dropped)
+    └── otherwise or failed     -> the original transcript stays
 ```
-Checks: `wrong_script` unit tests. Not yet proven end to end on a device.
+Checks: `retry` unit tests. Not yet proven end to end on a device.
 
 Meeting chunks and Annotate words go to the same machine, raw:
 

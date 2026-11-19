@@ -7,7 +7,11 @@
 FluidAudio Parakeet V2 (iOS 18+, English), and `SFSpeechRecognizer` before
 iOS 26. The keyboard dictates by itself on iOS 26+ (in-keyboard dictation), or
 over the shared App Group (`group.com.carlassmann.hex.mobile`) in a warm session.
-Audio never leaves the iPhone, and Hex removes each capture's file after
+Audio never leaves the iPhone (in this fork, with a paired desktop
+Hex, the keyboard's own recordings go to it instead:
+`HEXKeyboard/KeyboardRemoteTranscription.swift`, with Apple Speech only when
+that Hex can't answer and the fallback is on; the pairing lives in the App
+Group and its Keychain group, `HEXShared/PairedHexStore.swift`), and Hex removes each capture's file after
 inference, cancellation, or failure.
 
 This README is the map. Each area's detail lives in `docs/`, and the doc for

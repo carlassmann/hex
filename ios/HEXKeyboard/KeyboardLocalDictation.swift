@@ -1061,7 +1061,7 @@ final class KeyboardLocalDictation {
             defer { Self.transcribingJobs.remove(job.id) }
             let started = Date()
             do {
-                let (heard, language, engine) = try await KeyboardTranscription.transcribe(url, hints: hints, audioSeconds: seconds)
+                let (heard, language, engine) = try await Self.transcribe(url, hints: hints, audioSeconds: seconds)
                 // A recording left for the next keyboard stays until its text is held.
                 if !job.interrupted { try? FileManager.default.removeItem(at: url) }
                 let locale = language.identifier
@@ -1126,6 +1126,8 @@ final class KeyboardLocalDictation {
                       case .transcribing(let currentJob, _, _) = self.session, currentJob.id == jobID else { return }
                 if EmptyCapture.endsQuietly(error) {
                     self.endQuietly("no speech")
+                } else if let unavailable = error as? KeyboardRemoteTranscription.Unavailable {
+                    self.fail(unavailable.localizedDescription)
                 } else {
                     self.fail(
                         UserFacingError.message(for: error, context: .transcription),
@@ -1137,6 +1139,34 @@ final class KeyboardLocalDictation {
         if case .transcribing(let currentJob, let startedAt, _) = session, currentJob === job {
             setSession(.transcribing(job: job, startedAt: startedAt, task: task))
         }
+    }
+
+    /// On the paired Hex when there is one (this fork), else on this iPhone. A Hex that
+    /// can't answer falls back to this iPhone unless that fallback is off in the app.
+    @available(iOS 26.0, *)
+    private static func transcribe(
+        _ url: URL, hints: [String], audioSeconds: Double
+    ) async throws -> (String, SpeechLanguage, String) {
+        let onThisIPhone = { try await KeyboardTranscription.transcribe(url, hints: hints, audioSeconds: audioSeconds) }
+        guard let paired = PairedHexStore.load() else { return try await onThisIPhone() }
+        do {
+            let text = try await KeyboardRemoteTranscription.transcribe(url, on: paired.hex, token: paired.token)
+            return (text, pairedHexLanguage, paired.hex.name)
+        } catch let unavailable as KeyboardRemoteTranscription.Unavailable {
+            KeyboardProbeLog.shared.write("remote unavailable: \(unavailable.localizedDescription)")
+            guard PairedHexStore.fallsBackToDevice else { throw unavailable }
+            return try await onThisIPhone()
+        }
+    }
+
+    /// The paired Hex says no language; the steps after it use the one dictation is set to.
+    private static var pairedHexLanguage: SpeechLanguage {
+        let settings = LanguageSettings()
+        let identifier = settings.dictationLanguage
+            ?? settings.keyboardDictationLanguage()
+            ?? Locale.preferredLanguages.first
+            ?? "en-US"
+        return SpeechLanguage(locale: Locale(identifier: identifier), module: .dictation)
     }
 
     /// `message` is what the keyboard shows; `detail`, for the log only, may carry codes.

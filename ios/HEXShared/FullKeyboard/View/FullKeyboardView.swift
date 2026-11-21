@@ -727,11 +727,17 @@ final class FullKeyboardView: UIView {
     /// Frees non-essential UI and Metal drawables when the extension approaches its memory ceiling.
     func handleMemoryWarning() {
         dismissStyleMenu()
+        emojiPanel?.glyphs.purge()
+        releaseHiddenCaches()
+    }
+
+    /// Drops what isn't on screen and loads again when needed: the emoji library while its
+    /// panel is closed and the recording panel while nothing records.
+    func releaseHiddenCaches() {
         if emojiPanel == nil {
             emojiLibrary = nil
             EmojiLibrary.evictCached()
         }
-        emojiPanel?.glyphs.purge()
         if !showsRecording, let panel = recordingPanel {
             panel.tearDown()
             panel.removeFromSuperview()

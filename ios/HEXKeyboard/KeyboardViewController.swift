@@ -283,6 +283,19 @@ final class KeyboardViewController: UIInputViewController {
         typingLog?.flush()
     }
 
+    private var lastMemoryRelease: TimeInterval = 0
+
+    /// Dictating in the keyboard beats opening Hex, so before giving up for lack of memory the
+    /// keyboard drops what it can load again and isn't on screen (emoji, an idle recording
+    /// panel). At most every 10 s, as availability is checked on every poll.
+    private func freeMemoryForDictation() {
+        let now = Date().timeIntervalSince1970
+        guard now - lastMemoryRelease >= 10 else { return }
+        lastMemoryRelease = now
+        fullKeyboard?.releaseHiddenCaches()
+        if barEmojiPanel == nil { barEmojiLibrary = nil }
+    }
+
     override func viewWillLayoutSubviews() {
         super.viewWillLayoutSubviews()
         if let fullKeyboard {
@@ -1248,6 +1261,7 @@ final class KeyboardViewController: UIInputViewController {
                 hasMemoryToStart: localDictation.hasMemoryToStart,
                 includeRecentHandoff: false
             )
+        if reason == .memory { freeMemoryForDictation() }
         let available = reason == nil
         viewModel.opensHexReason = reason
         guard available != localDictationAvailable else { return }

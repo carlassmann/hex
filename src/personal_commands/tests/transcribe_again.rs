@@ -235,3 +235,14 @@ fn modes_run_transformations_on_an_empty_transcript_with_speech() {
     running.join().unwrap();
     fs::remove_dir_all(root).unwrap();
 }
+
+/// `docs/examples/retry-transcripts.ts` loads and retries only what it means to.
+#[test]
+fn the_retry_example_retries_empty_and_wrong_script_dictations() {
+    let harness = Harness::new(include_str!("../../../docs/examples/retry-transcripts.ts"));
+    let retry = |text| dictation(&harness, "retry-transcripts", text).unwrap();
+    assert_eq!(retry(""), "cohere_transcribe:de");
+    assert_eq!(retry("привет мир"), "cohere_transcribe:de");
+    assert_eq!(retry("Hallo Welt"), "Hallo Welt");
+    assert_eq!(harness.transform(&["retry-transcripts"], "").unwrap(), "");
+}

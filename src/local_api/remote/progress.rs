@@ -34,6 +34,7 @@ use serde_json::{Value, json};
 
 use super::super::{HttpContext, generate_token, write_stream_headers};
 use super::journal::{self, Entry, Rewrite};
+use crate::dictation::heard::HeardClip;
 use crate::transcription::service::{AudioClip, TranscriptionServiceError};
 use crate::transcription::stream::{CreateError, End, PushError, SampleFormat, Segment, Stream};
 
@@ -121,6 +122,7 @@ pub(super) fn finish_stream(
     let transcribing = Instant::now();
     let early = super::rewrite::take(stream.id);
     let audio = stream.take_kept_audio().unwrap_or_default();
+    let heard = HeardClip::keep(&crate::app_settings::transcription_selection().1, &audio);
     // The whole recording reads better than the stream's pause-cut windows
     // and always wins, so the stream's own finish isn't waited for.
     let (transcript, finished_by) = match whole_clip(&mut progress, audio.clone()) {
@@ -150,7 +152,7 @@ pub(super) fn finish_stream(
         Some(early) if !segments.is_empty() => {
             rewrite_rest(&mut progress, early, &raw, segments, application)
         }
-        Some(_) | None => rewrite(&mut progress, &raw, application),
+        Some(_) | None => rewrite(&mut progress, &raw, application, heard),
     };
     let Some(rewritten) = rewritten else {
         entry.error = Some("device-gone: the device stopped waiting".into());
@@ -200,6 +202,10 @@ pub(super) fn dictate(
         ..Entry::default()
     };
     progress.send(json!({ "stage": "received", "durationMs": audio_ms }));
+    let heard = HeardClip::keep(
+        &crate::app_settings::transcription_selection().1,
+        clip.samples(),
+    );
     let transcribing = Instant::now();
     let whole = whole_clip(&mut progress, clip.samples().to_vec());
     let (route, raw) = match whole {
@@ -226,7 +232,7 @@ pub(super) fn dictate(
     };
     entry.transcribe_ms = transcribing.elapsed().as_millis() as u64;
     entry.raw = raw.clone();
-    let Some(rewritten) = rewrite(&mut progress, &raw, application) else {
+    let Some(rewritten) = rewrite(&mut progress, &raw, application, heard) else {
         entry.error = Some("device-gone: the device stopped waiting".into());
         return journal::record(entry);
     };
@@ -437,7 +443,7 @@ fn wait_for_service(
     let settings = crate::app_settings::AppSettings::load()
         .map_err(|_| Failure::new("settings-unavailable", "Hex could not read its settings"))?;
     let selection = settings.transcription;
-    if !super::super::model_ready(&selection) {
+    if !crate::transcription::service::is_ready(&selection) {
         return Err(Failure::new(
             "model-not-ready",
             "the speech model isn't ready",
@@ -496,9 +502,14 @@ fn service_failure(error: TranscriptionServiceError) -> Failure {
     }
 }
 
-/// Runs the Modes on `raw`, sending a line each second; `None` when the
-/// device left meanwhile.
-fn rewrite(progress: &mut Progress, raw: &str, application: String) -> Option<Rewritten> {
+/// Runs the Modes on `raw`, whose transformations may hear the `heard` clip
+/// again, sending a line each second; `None` when the device left meanwhile.
+fn rewrite(
+    progress: &mut Progress,
+    raw: &str,
+    application: String,
+    heard: Option<HeardClip>,
+) -> Option<Rewritten> {
     let started = Instant::now();
     if !progress.send(json!({ "stage": "rewriting" })) {
         return None;
@@ -508,7 +519,12 @@ fn rewrite(progress: &mut Progress, raw: &str, application: String) -> Option<Re
     std::thread::Builder::new()
         .name("remote-rewrite".into())
         .spawn(move || {
-            let _ = sender.send(super::process(&raw_owned, application, None));
+            let _ = sender.send(super::process(
+                &raw_owned,
+                application,
+                None,
+                heard.as_ref(),
+            ));
         })
         .ok()?;
     let processed = loop {
@@ -564,7 +580,7 @@ fn rewrite_rest(
         .name("remote-rewrite".into())
         .spawn(move || {
             let finished = early.finish(&segments, wait, |rest| {
-                super::process(rest, application, None)
+                super::process(rest, application, None, None)
             });
             let _ = sender.send(finished);
         })

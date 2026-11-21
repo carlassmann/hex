@@ -103,6 +103,13 @@ pub(super) fn process_dictation_job(
                 stop_phrase_only = true;
                 return Ok(String::new());
             }
+            // Labs › Transcribe again in transforms: speech the model missed
+            // still reaches the transformations, which may hear it again.
+            PreparedTranscript::Empty
+                if crate::dictation::heard::held_speech(job.heard.as_ref()) =>
+            {
+                String::new()
+            }
             PreparedTranscript::Empty => {
                 if let Some(print) = job.print.take() {
                     print.send(PrintedTranscript::NoSpeech);
@@ -122,10 +129,12 @@ pub(super) fn process_dictation_job(
                 &context,
                 transformations,
                 crate::dictation::processor::Source::Dictation,
+                job.heard.as_ref(),
             )
         } else {
             crate::dictation::processor::Processed::unchanged(&raw_text)
         };
+        let heard_nothing = raw_text.trim().is_empty();
         let input = DeliveryInput {
             target,
             raw_text,
@@ -148,6 +157,8 @@ pub(super) fn process_dictation_job(
         };
         match deliver(input, history, &mut adapter)? {
             DeliveryOutcome::VoicePromptNothing => Ok(String::new()),
+            // Transforms that heard missed speech again and still found none.
+            DeliveryOutcome::EmptyOutput if heard_nothing => Err(EMPTY_TRANSCRIPT_ERROR.into()),
             DeliveryOutcome::EmptyOutput => Err(EMPTY_PROCESSED_ERROR.into()),
             DeliveryOutcome::Delivered {
                 text,

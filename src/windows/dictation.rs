@@ -68,6 +68,9 @@ struct Job {
     language: String,
     /// The clip, kept for History while Labs › Keep recordings is on.
     recording: Option<crate::history::Recording>,
+    /// The clip, kept for transformations to hear again (Labs › Transcribe
+    /// again in transforms).
+    heard: Option<crate::dictation::heard::HeardClip>,
     /// The shortcut that started this capture (dictation, raw, terminal
     /// paste, or second dictation).
     flavour: crate::dictation::DictationFlavour,

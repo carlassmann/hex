@@ -863,7 +863,7 @@ fn transcription_action(
             return RequestAction::Respond(HttpResponse::code(400, code));
         }
     };
-    if !model_ready(&selection) {
+    if !crate::transcription::service::is_ready(&selection) {
         return RequestAction::Respond(HttpResponse::code(409, "model-not-ready"));
     }
     let Some(admission) = transcription.admit_audio() else {
@@ -877,11 +877,6 @@ fn transcription_action(
         processing: guard,
         timestamps: requested,
     }
-}
-
-fn model_ready(selection: &crate::transcription::models::TranscriptionSelection) -> bool {
-    let model = crate::transcription::models::definition(selection.model);
-    crate::transcription::readiness::is_ready(&model, &selection.language)
 }
 
 fn developer_control_action(request: HttpRequest, available: bool) -> RequestAction {

@@ -237,6 +237,7 @@ define_features! {
     ConfirmLongCancels => labs(confirm_long_cancels), "confirm-long-cancels", Dictation, Everyone, EVERY, 20261125;
     MiddleMouseDictation => labs(middle_mouse_dictation), "middle-mouse-dictation", Shortcuts, Everyone, MACOS, 20261125;
     RemoteTranscription => labs(remote_transcription), "remote-transcription", Dictation, Everyone, MACOS, 20261111;
+    TranscribeAgain => labs(transcribe_again), "transcribe-again", Dictation, Everyone, EVERY, 20261121;
 }
 
 impl Feature {

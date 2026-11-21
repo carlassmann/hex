@@ -1544,6 +1544,7 @@ Transform host APIs                      // personal_commands/{io,fetch,process,
 ├── fetch(url, { method, headers, body, signal }) -> Response (ureq, platform TLS)
 ├── node:child_process execFile / exec (+ node:util promisify, input option)
 ├── setTimeout, AbortController, AbortSignal.timeout
+├── context.transcript.transcribeAgain (Labs › Transcribe again in transforms; local, no trust prompt; labs.md)
 └── First use -> Output pane trust prompt (hosts, programs, or capability)
     ├── Allow -> hash of every loaded file pinned in transform-trust.json
     ├── Any edit -> asks again

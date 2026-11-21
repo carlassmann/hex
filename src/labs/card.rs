@@ -103,6 +103,7 @@ impl Feature {
             Self::MeetingAudioSource => "Choose meeting audio",
             Self::MiddleMouseDictation => "Middle mouse dictation",
             Self::RemoteTranscription => "Remote transcription",
+            Self::TranscribeAgain => "Transcribe again in transforms",
         }
     }
 
@@ -312,6 +313,9 @@ impl Feature {
             }
             Self::RemoteTranscription => {
                 "Send dictations, meeting audio, and Annotate narration to another Hex, which transcribes them and runs its Output steps. When it can't be reached, this Mac does"
+            }
+            Self::TranscribeAgain => {
+                "Your transformations can hear a dictation again with another speech model"
             }
             Self::CopyDictationAudio => {
                 "Copy a kept dictation's audio as a file from History, the menu bar, or the tray; needs Keep recordings"

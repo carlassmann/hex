@@ -38,17 +38,19 @@ pub(super) fn submit_capture(
             let audio_ms = clip.duration_ms();
             let stream = clip.take_stream();
             let samples = clip.into_transcription_samples();
-            let language = engine
+            let selection = engine
                 .held_selection()
-                .unwrap_or_else(|| crate::app_settings::transcription_selection().1)
-                .language;
+                .unwrap_or_else(|| crate::app_settings::transcription_selection().1);
             let recording = crate::history::Recording::keep(&samples);
+            let heard = crate::dictation::heard::HeardClip::keep(&selection, &samples);
+            let language = selection.language;
             let job = OutputJob::Dictation(Box::new(Job {
                 context,
                 transcript: engine.finish(stream, samples)?,
                 audio_ms,
                 language,
                 recording,
+                heard,
                 print,
                 flavour,
                 by_shortcut,

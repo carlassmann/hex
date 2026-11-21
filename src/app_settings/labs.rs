@@ -391,6 +391,9 @@ pub struct LabsSettings {
     pub groups: std::collections::BTreeMap<String, bool>,
     /// Dictations go to the Hex this one is connected to (`hex remote connect`; macOS).
     pub remote_transcription: bool,
+    /// Transformations can hear a dictation again with another speech
+    /// model (`context.transcript.transcribeAgain`).
+    pub transcribe_again: bool,
     /// Retired switches the `meeting-labs-settings` migration reads into
     /// `meetings.*` once: `meetings.stop_when_call_ends`,
     /// `meetings.export.descriptive_filenames`, `meetings.export.notes_file`,
@@ -614,6 +617,7 @@ impl Default for LabsSettings {
             meeting_audio_source_choice: crate::meeting::audio_source::SourceChoice::All,
             groups: std::collections::BTreeMap::new(),
             remote_transcription: false,
+            transcribe_again: false,
             stop_when_call_ends: None,
             meeting_descriptive_filenames: None,
             meeting_notes_file: None,

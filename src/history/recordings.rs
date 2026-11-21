@@ -17,9 +17,7 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 
 use super::HistoryEntry;
 use crate::transcription::models::TranscriptionSelection;
-use crate::transcription::service::{
-    AudioClip, AudioError, TranscriptionService, TranscriptionServiceError,
-};
+use crate::transcription::service::{AudioClip, AudioError, transcribe_once};
 
 /// Every recording together stays under this; about 4.5 hours of audio.
 pub const MAX_RECORDING_BYTES: u64 = 512 * 1024 * 1024;
@@ -164,41 +162,12 @@ pub fn retranscribe(path: &Path, selection: TranscriptionSelection) -> Result<St
         AudioError::Invalid | AudioError::Unsupported => "The recording could not be read.",
         AudioError::ResourceExhausted => "The recording is too long.",
     })?;
-    let (mut service, handle) =
-        TranscriptionService::start().map_err(|error| format!("{error:#}"))?;
-    let admission = handle
-        .admit_audio()
-        .ok_or_else(|| "Another transcription is running.".to_string())?;
-    let result = handle
-        .transcribe(
-            selection,
-            clip,
-            admission,
-            crate::transcription::transcript::TimestampLevel::None,
-        )
-        .map_err(describe)
-        .and_then(|job| match job.wait_timeout(RETRANSCRIBE_DEADLINE) {
-            Ok(Some(result)) => result.map_err(describe),
-            Ok(None) => Err("Transcribing took too long.".into()),
-            Err(error) => Err(describe(error)),
-        });
-    // The worker runs until every sender is gone; the handle holds one, so
-    // keeping it would make the shutdown wait forever after the result.
-    drop(handle);
-    service.shutdown();
-    result.map(|transcript| transcript.text.trim().to_string())
-}
-
-fn describe(error: TranscriptionServiceError) -> String {
-    match error {
-        TranscriptionServiceError::QueueFull => "Another transcription is running.".into(),
-        TranscriptionServiceError::Unavailable => "Transcription stopped.".into(),
-        TranscriptionServiceError::Cancelled => "Transcription was cancelled.".into(),
-        TranscriptionServiceError::Timestamps => "The model cannot give these timings.".into(),
-        TranscriptionServiceError::Model(error) | TranscriptionServiceError::Inference(error) => {
-            error
-        }
-    }
+    transcribe_once(
+        selection,
+        clip,
+        RETRANSCRIBE_DEADLINE,
+        &std::sync::atomic::AtomicBool::new(false),
+    )
 }
 
 #[cfg(unix)]

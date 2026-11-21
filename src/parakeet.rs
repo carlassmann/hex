@@ -14,7 +14,7 @@ use crate::continuation::InputActivity;
 use crate::dictation::context::ContextSnapshot;
 use crate::dictation::paste_last::LastDictation;
 use crate::dictation::processor::ProcessingObservation;
-use crate::dictation::{DictationClip, correction_watch, pad_for_parakeet};
+use crate::dictation::{DictationClip, correction_watch, heard, pad_for_parakeet};
 use crate::history::History;
 #[cfg(test)]
 use crate::history::HistoryKind;
@@ -102,6 +102,7 @@ struct InferenceJob {
     language: String,
     /// The clip, kept for History while Labs › Keep recordings is on.
     recording: Option<crate::history::Recording>,
+    heard: Option<heard::HeardClip>,
     /// See [`JobTimings::send_gate`].
     send_gate: Option<crate::dictation::yolo_mode::SendGate>,
     /// Labs › Stop phrase: the words its capture ended with, read when the
@@ -120,6 +121,7 @@ struct ProcessorJob {
     language: String,
     timings: JobTimings,
     recording: Option<crate::history::Recording>,
+    heard: Option<heard::HeardClip>,
     /// The connected Hex's processed text; `text` is then its raw transcript.
     remote: Option<crate::dictation::processor::Processed>,
 }
@@ -454,10 +456,11 @@ impl DictationWorker {
         let _capture = clip.take_capture_marker();
         let samples = clip.into_transcription_samples();
         crate::dictation::diagnostics::persist(&samples);
-        let recording = match target {
-            TranscriptionTarget::Service => None,
-            _ => crate::history::Recording::keep(&samples),
-        };
+        let keeps_clip = !matches!(target, TranscriptionTarget::Service);
+        let recording = keeps_clip.then(|| Recording::keep(&samples)).flatten();
+        let heard = keeps_clip
+            .then(|| heard::HeardClip::keep(&selection, &samples))
+            .flatten();
         let prepare_ms = submitted_at.elapsed().as_millis();
         let offline = Box::new(move |model: &mut WarmTranscriber, samples: Vec<f32>| {
             let _busy = DictationInference::begin();
@@ -490,6 +493,7 @@ impl DictationWorker {
             return_to,
             language,
             recording,
+            heard,
             send_gate,
             stop_phrase,
         }) {
@@ -732,6 +736,7 @@ fn run_processor_worker(
             &job.context,
             &AtomicBool::new(false),
             crate::dictation::processor::Source::Dictation,
+            job.heard.as_ref(),
         );
         if let Some(observation) = &processed.observation
             && let Some(error) = &observation.fallback
@@ -833,7 +838,10 @@ fn run_inference_worker(
             send_gate: job.send_gate,
         };
         match result {
-            Ok(text) if target.processes() && !text.trim().is_empty() => {
+            Ok(text)
+                if target.processes()
+                    && (!text.trim().is_empty() || heard::held_speech(job.heard.as_ref())) =>
+            {
                 if processor_jobs
                     .send(ProcessorJob {
                         ticket: job.ticket,
@@ -846,6 +854,7 @@ fn run_inference_worker(
                         language: job.language,
                         timings,
                         recording: job.recording,
+                        heard: job.heard,
                         remote,
                     })
                     .is_err()
@@ -1312,6 +1321,7 @@ mod tests {
                 send_gate: None,
             },
             recording: None,
+            heard: None,
             remote: None,
         }
     }

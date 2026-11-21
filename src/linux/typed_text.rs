@@ -126,7 +126,14 @@ pub(crate) fn run(
         |text| {
             let context = crate::linux::context::capture(modes.reads_page());
             modes
-                .process(text, LANGUAGE, &context, transformations, Source::TypedText)
+                .process(
+                    text,
+                    LANGUAGE,
+                    &context,
+                    transformations,
+                    Source::TypedText,
+                    None,
+                )
                 .text
         },
         stop,

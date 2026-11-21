@@ -9,8 +9,8 @@ use color_eyre::Result;
 use color_eyre::eyre::eyre;
 
 use crate::dictation::modes::output::{
-    DeliveryInput, DeliveryOutcome, EMPTY_PROCESSED_ERROR, InsertPlan, InsertResult, OutputAdapter,
-    OutputTarget, deliver, resolve_paste_last,
+    DeliveryInput, DeliveryOutcome, EMPTY_PROCESSED_ERROR, EMPTY_TRANSCRIPT_ERROR, InsertPlan,
+    InsertResult, OutputAdapter, OutputTarget, deliver, resolve_paste_last,
 };
 use crate::dictation::paste_last::LastDictation;
 use crate::linux::clipboard::Selection;
@@ -143,6 +143,7 @@ impl DictationOutput {
         inference_ms: u64,
         started: Instant,
         recording: Option<crate::history::Recording>,
+        heard: Option<crate::dictation::heard::HeardClip>,
         typing: Option<crate::linux::live_typing::Session>,
         context: crate::dictation::context::ContextSnapshot,
         by_shortcut: bool,
@@ -159,10 +160,12 @@ impl DictationOutput {
                 &context,
                 &self.transformations,
                 crate::dictation::processor::Source::Dictation,
+                heard.as_ref(),
             )
         } else {
             crate::dictation::processor::Processed::unchanged(raw_text.trim())
         };
+        let heard_nothing = raw_text.trim().is_empty();
         let input = DeliveryInput {
             target,
             raw_text,
@@ -185,6 +188,8 @@ impl DictationOutput {
         };
         match deliver(input, self.history.as_ref(), &mut adapter).map_err(|error| eyre!(error))? {
             DeliveryOutcome::VoicePromptNothing => Ok(String::new()),
+            // Transforms that heard missed speech again and still found none.
+            DeliveryOutcome::EmptyOutput if heard_nothing => Err(eyre!(EMPTY_TRANSCRIPT_ERROR)),
             DeliveryOutcome::EmptyOutput => Err(eyre!(EMPTY_PROCESSED_ERROR)),
             DeliveryOutcome::Delivered { text, .. } => Ok(text),
         }

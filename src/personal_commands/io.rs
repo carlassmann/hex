@@ -1,5 +1,5 @@
 //! The asynchronous host operations behind a script's `fetch`,
-//! `node:child_process`, and timers. JavaScript starts an operation with a
+//! `node:child_process`, timers, and `context.transcript.transcribeAgain`. JavaScript starts an operation with a
 //! resolve and reject pair (`hex:io`'s `start`); the work runs on its own
 //! thread, and [`Io::wait`] hands finished operations back to the script
 //! thread, which settles them so QuickJS's job queue can go on. Everything
@@ -9,7 +9,8 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -19,17 +20,24 @@ use serde::{Deserialize, Serialize};
 
 use super::fetch::{self, FetchRequest, FetchResponse};
 use super::process::{self, ExecRequest, ExecResult, ProcessTree};
+use crate::dictation::heard::{self, HeardClip};
+use crate::transcription::models::TranscriptionSelection;
 
 /// Requests in flight at once, across every script; more wait their turn.
 /// A request a script gave up on still counts until its thread ends.
 const MAX_FETCHES: usize = 8;
 /// Programs running at once, across every script.
 const MAX_PROCESSES: usize = 4;
+/// Dictations heard again at once, across every script: one model at a time.
+const MAX_TRANSCRIPTIONS: usize = 1;
+/// How many times one transformation call may hear its dictation again.
+const MAX_TRANSCRIPTIONS_PER_CALL: u32 = 3;
 /// How long [`Io::wait`] sleeps before checking for a stop request.
 const WAIT_SLICE: Duration = Duration::from_millis(50);
 
 static FETCHES: AtomicUsize = AtomicUsize::new(0);
 static PROCESSES: AtomicUsize = AtomicUsize::new(0);
+static TRANSCRIPTIONS: AtomicUsize = AtomicUsize::new(0);
 
 /// The host APIs a config can use beyond plain JavaScript.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -64,6 +72,12 @@ pub struct Io {
     loopback_only: bool,
     deadline: Option<Instant>,
     workspace: PathBuf,
+    /// The current call's dictation clip, when it may hear it again.
+    heard: Option<HeardClip>,
+    /// Times the current call asked to hear its dictation again.
+    transcriptions: u32,
+    /// Set when the current call ends, so its transcriptions stop.
+    call_ended: Arc<AtomicBool>,
 }
 
 struct Operation {
@@ -82,6 +96,8 @@ enum State {
         timeout: Option<Instant>,
         timed_out: bool,
     },
+    WaitingToTranscribe(TranscriptionSelection),
+    Transcribing,
 }
 
 struct Completion {
@@ -92,6 +108,7 @@ struct Completion {
 enum Outcome {
     Fetch(Result<FetchResponse, String>),
     Exec(ExecResult),
+    Transcribe(Result<String, String>),
 }
 
 /// A settled operation, ready to hand to JavaScript.
@@ -154,25 +171,40 @@ impl Io {
             loopback_only: false,
             deadline: None,
             workspace,
+            heard: None,
+            transcriptions: 0,
+            call_ended: Arc::new(AtomicBool::new(true)),
         }))
     }
 
     /// Starts a call that may use `allowed` until `deadline`; with
     /// `loopback_only`, `fetch` stays on this computer and no program runs.
-    pub fn begin(&mut self, deadline: Instant, allowed: Capabilities, loopback_only: bool) {
+    /// A dictation's call may hear its `heard` clip again.
+    pub fn begin(
+        &mut self,
+        deadline: Instant,
+        allowed: Capabilities,
+        loopback_only: bool,
+        heard: Option<HeardClip>,
+    ) {
         self.deadline = Some(deadline);
         self.allowed = allowed;
         self.loopback_only = loopback_only;
+        self.heard = heard;
+        self.transcriptions = 0;
+        self.call_ended = Arc::new(AtomicBool::new(false));
     }
 
-    /// Ends the call: forgets its pending operations and ends every process
-    /// tree it started. Requests already sent finish on their own threads
-    /// within the call's deadline, unread.
+    /// Ends the call: forgets its pending operations, ends every process
+    /// tree it started, and stops its transcriptions. Requests already sent
+    /// finish on their own threads within the call's deadline, unread.
     pub fn end(&mut self) {
         self.operations.clear();
         for tree in self.trees.drain(..) {
             tree.kill();
         }
+        self.call_ended.store(true, Ordering::Release);
+        self.heard = None;
         self.deadline = None;
         self.allowed = Capabilities::NONE;
         self.loopback_only = false;
@@ -257,6 +289,14 @@ impl Io {
                 function: operation.reject,
                 value: Payload::Message(message),
             },
+            Outcome::Transcribe(Ok(text)) => Settled {
+                function: operation.resolve,
+                value: Payload::Message(text),
+            },
+            Outcome::Transcribe(Err(message)) => Settled {
+                function: operation.reject,
+                value: Payload::Message(message),
+            },
             Outcome::Exec(mut result) => {
                 result.timed_out = matches!(
                     operation.state,
@@ -275,7 +315,8 @@ impl Io {
         })
     }
 
-    /// Starts waiting requests and programs while there is room, oldest first.
+    /// Starts waiting requests, programs, and transcriptions while there is
+    /// room, oldest first.
     fn pump(&mut self) {
         let waiting = self
             .operations
@@ -283,7 +324,9 @@ impl Io {
             .filter(|(_, operation)| {
                 matches!(
                     operation.state,
-                    State::WaitingToFetch(_) | State::WaitingToRun(_)
+                    State::WaitingToFetch(_)
+                        | State::WaitingToRun(_)
+                        | State::WaitingToTranscribe(_)
                 )
             })
             .map(|(id, _)| *id)
@@ -357,6 +400,23 @@ impl Io {
                         timed_out: false,
                     };
                 }
+                State::WaitingToTranscribe(_)
+                    if let Some(heard) = &self.heard
+                        && reserve(&TRANSCRIPTIONS, MAX_TRANSCRIPTIONS) =>
+                {
+                    let State::WaitingToTranscribe(selection) =
+                        std::mem::replace(&mut operation.state, State::Transcribing)
+                    else {
+                        unreachable!()
+                    };
+                    transcribe(
+                        id,
+                        heard.clone(),
+                        selection,
+                        self.call_ended.clone(),
+                        self.sender.clone(),
+                    );
+                }
                 _ => {}
             }
         }
@@ -380,6 +440,35 @@ impl Io {
         {
             tree.terminate();
         }
+    }
+}
+
+/// Hears `heard` again with `selection` on a thread of its own, holding a
+/// [`TRANSCRIPTIONS`] slot until the model is done, even after its call ended.
+fn transcribe(
+    id: u32,
+    heard: HeardClip,
+    selection: TranscriptionSelection,
+    call_ended: Arc<AtomicBool>,
+    sender: Sender<Completion>,
+) {
+    let finished = sender.clone();
+    let spawned = thread::Builder::new()
+        .name("hex-config-transcribe".into())
+        .spawn(move || {
+            let outcome = heard.transcribe_again(selection, &call_ended);
+            TRANSCRIPTIONS.fetch_sub(1, Ordering::AcqRel);
+            let _ = finished.send(Completion {
+                id,
+                outcome: Outcome::Transcribe(outcome),
+            });
+        });
+    if let Err(error) = spawned {
+        TRANSCRIPTIONS.fetch_sub(1, Ordering::AcqRel);
+        let _ = sender.send(Completion {
+            id,
+            outcome: Outcome::Transcribe(Err(error.to_string())),
+        });
     }
 }
 
@@ -410,7 +499,7 @@ pub fn bindings<'js>(ctx: &Ctx<'js>, io: &Shared) -> rquickjs::Result<Object<'js
                   spec: String,
                   resolve: Function<'js>,
                   reject: Function<'js>| {
-                let state = parse(&ctx, &starting.borrow(), &kind, &spec)?;
+                let state = parse(&ctx, &mut starting.borrow_mut(), &kind, &spec)?;
                 let operation = Operation {
                     resolve: Persistent::save(&ctx, resolve),
                     reject: Persistent::save(&ctx, reject),
@@ -448,7 +537,7 @@ pub fn bindings<'js>(ctx: &Ctx<'js>, io: &Shared) -> rquickjs::Result<Object<'js
 }
 
 /// The operation `kind` and its JSON `spec` describe, if the call may start it.
-fn parse(ctx: &Ctx<'_>, io: &Io, kind: &str, spec: &str) -> rquickjs::Result<State> {
+fn parse(ctx: &Ctx<'_>, io: &mut Io, kind: &str, spec: &str) -> rquickjs::Result<State> {
     let invalid = |error: serde_json::Error| Exception::throw_type(ctx, &error.to_string());
     match kind {
         "timer" => {
@@ -481,11 +570,36 @@ fn parse(ctx: &Ctx<'_>, io: &Io, kind: &str, spec: &str) -> rquickjs::Result<Sta
             let request: ExecRequest = serde_json::from_str(spec).map_err(invalid)?;
             Ok(State::WaitingToRun(request))
         }
+        "transcribe" => {
+            let request: heard::Request = serde_json::from_str(spec).map_err(invalid)?;
+            let selection = transcription(io, &request)
+                .map_err(|message| Exception::throw_message(ctx, &message))?;
+            io.transcriptions += 1;
+            Ok(State::WaitingToTranscribe(selection))
+        }
         _ => Err(Exception::throw_type(
             ctx,
             &format!("unknown operation {kind}"),
         )),
     }
+}
+
+/// What `transcribeAgain` asked for, if this call may hear its dictation
+/// again: only a dictation's call while the lab is on, a few times, with a
+/// model that is installed.
+fn transcription(io: &Io, request: &heard::Request) -> Result<TranscriptionSelection, String> {
+    let Some(heard) = &io.heard else {
+        return Err(
+            "transcribeAgain works only in a dictation's transformation, with Labs › Transcribe again in transforms on"
+                .into(),
+        );
+    };
+    if io.transcriptions >= MAX_TRANSCRIPTIONS_PER_CALL {
+        return Err(format!(
+            "a transformation can hear a dictation again at most {MAX_TRANSCRIPTIONS_PER_CALL} times"
+        ));
+    }
+    heard.selection_for(request)
 }
 
 /// The trust gate: a config uses `fetch` or runs programs only once the

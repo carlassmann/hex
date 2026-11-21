@@ -213,6 +213,7 @@ pub(crate) fn profiles_processor(
             &context,
             cancelled,
             crate::dictation::processor::Source::Dictation,
+            None,
         );
         processed.text
     })

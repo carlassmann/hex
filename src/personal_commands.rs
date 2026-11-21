@@ -27,6 +27,7 @@ use color_eyre::eyre::{Result, WrapErr, eyre};
 use serde::{Deserialize, Serialize};
 
 use crate::dictation::context::ContextSnapshot;
+use crate::dictation::heard::{HeardClip, TranscriptContext};
 
 use io::Capabilities;
 use script::Script;
@@ -56,7 +57,8 @@ const MAX_STATUS_BYTES: usize = 256 * 1024;
 const MAX_STATUS_ERROR_BYTES: usize = 4096;
 const MAX_TRANSFORMATION_TEXT_BYTES: usize = 48 * 1024;
 /// A transformation's limit unless it sets `timeout`: one second for plain
-/// JavaScript, thirty when its config can fetch or run programs.
+/// JavaScript, thirty when its config can fetch, run programs, or hear a
+/// dictation again.
 const PURE_TIMEOUT: Duration = Duration::from_secs(1);
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 /// The most `timeout` can ask for.
@@ -657,15 +659,25 @@ impl Worker {
         request: &TransformationRequest,
         stop: &AtomicBool,
     ) -> std::result::Result<String, String> {
-        let context = json(&invocation_context(&request.context, request.source));
+        let context = json(&invocation_context(
+            &request.context,
+            request.source,
+            request.heard.as_ref(),
+        ));
         let allowed = self.allowed(&loaded.script);
         let mut text = request.text.clone();
         for id in &request.ids {
             let limit = loaded.limits.get(id).copied().unwrap_or(PURE_TIMEOUT);
             let started = Instant::now();
-            let result = loaded
-                .script
-                .transform(id, &text, &context, limit, allowed, stop);
+            let result = loaded.script.transform(
+                id,
+                &text,
+                &context,
+                limit,
+                allowed,
+                request.heard.as_ref(),
+                stop,
+            );
             tracing::info!(
                 generation = loaded.generation,
                 id,
@@ -718,7 +730,7 @@ fn load_config(workspace: &Path, config: &str) -> Result<(Script, Candidate)> {
             "personal registry exceeds {MAX_TRANSFORMATIONS} transformations"
         ));
     }
-    let default_limit = if script.permissions().capabilities().any() {
+    let default_limit = if script.permissions().capabilities().any() || script.transcribes_again() {
         IO_TIMEOUT
     } else {
         PURE_TIMEOUT
@@ -799,6 +811,8 @@ struct TransformationRequest {
     text: String,
     context: ContextSnapshot,
     source: crate::dictation::processor::Source,
+    /// The dictation's clip, when its transformations may hear it again.
+    heard: Option<HeardClip>,
     response: SyncSender<std::result::Result<String, String>>,
 }
 
@@ -810,6 +824,7 @@ impl TransformationClient {
         context: &ContextSnapshot,
         cancelled: &AtomicBool,
         source: crate::dictation::processor::Source,
+        heard: Option<&HeardClip>,
     ) -> std::result::Result<String, String> {
         if ids.is_empty() {
             return Ok(text.into());
@@ -825,7 +840,8 @@ impl TransformationClient {
         for id in ids {
             if let Some(builtin) = builtin_transformation(id) {
                 if !custom.is_empty() {
-                    output = self.transform_custom(&custom, &output, context, cancelled, source)?;
+                    output =
+                        self.transform_custom(&custom, &output, context, cancelled, source, heard)?;
                     custom.clear();
                 }
                 output = (builtin.apply)(&output);
@@ -834,7 +850,7 @@ impl TransformationClient {
             }
         }
         if !custom.is_empty() {
-            output = self.transform_custom(&custom, &output, context, cancelled, source)?;
+            output = self.transform_custom(&custom, &output, context, cancelled, source, heard)?;
         }
         Ok(output)
     }
@@ -846,6 +862,7 @@ impl TransformationClient {
         context: &ContextSnapshot,
         cancelled: &AtomicBool,
         source: crate::dictation::processor::Source,
+        heard: Option<&HeardClip>,
     ) -> std::result::Result<String, String> {
         let active = self
             .active
@@ -870,6 +887,7 @@ impl TransformationClient {
                 text: text.into(),
                 context: context.clone(),
                 source,
+                heard: heard.cloned(),
                 response: sender,
             })))
             .map_err(|error| match error {
@@ -970,11 +988,16 @@ struct InvocationContext {
     browser_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     window_title: Option<String>,
+    /// The dictation's transcript and clip (Labs › Transcribe again in
+    /// transforms); JavaScript adds `transcribeAgain`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transcript: Option<TranscriptContext>,
 }
 
 fn invocation_context(
     context: &ContextSnapshot,
     source: crate::dictation::processor::Source,
+    heard: Option<&HeardClip>,
 ) -> InvocationContext {
     InvocationContext {
         source: source.as_str(),
@@ -982,6 +1005,7 @@ fn invocation_context(
         browser_host: context.browser_host().map(Into::into),
         browser_url: context.browser_url.as_ref().map(ToString::to_string),
         window_title: context.window_title.clone(),
+        transcript: heard.map(HeardClip::context),
     }
 }
 
@@ -1098,6 +1122,7 @@ mod tests {
     use std::sync::atomic::AtomicU64;
 
     mod host_apis;
+    mod transcribe_again;
 
     /// A temp path no other test, nextest process, or later run shares.
     fn unique_temp_dir(prefix: &str) -> PathBuf {
@@ -1150,7 +1175,7 @@ mod tests {
         use crate::dictation::processor::Source;
         let context = ContextSnapshot::default();
         let read = |source| -> serde_json::Value {
-            serde_json::from_str(&json(&invocation_context(&context, source))).unwrap()
+            serde_json::from_str(&json(&invocation_context(&context, source, None))).unwrap()
         };
         assert_eq!(read(Source::Dictation)["source"], "dictation");
         assert_eq!(read(Source::TypedText)["source"], "typed-text");
@@ -1209,6 +1234,7 @@ mod tests {
                 &ContextSnapshot::default(),
                 &AtomicBool::new(false),
                 crate::dictation::processor::Source::Dictation,
+                None,
             )
             .unwrap();
 
@@ -1221,6 +1247,7 @@ mod tests {
                     &ContextSnapshot::default(),
                     &AtomicBool::new(false),
                     crate::dictation::processor::Source::Dictation,
+                    None,
                 )
                 .is_err()
         );
@@ -1241,6 +1268,7 @@ mod tests {
                     &context,
                     &cancelled,
                     crate::dictation::processor::Source::Dictation,
+                    None,
                 )
                 .unwrap(),
             "hello, world!"
@@ -1253,6 +1281,7 @@ mod tests {
                     &context,
                     &cancelled,
                     crate::dictation::processor::Source::Dictation,
+                    None,
                 )
                 .unwrap(),
             "sPoNgE bOb!"
@@ -1314,6 +1343,7 @@ mod tests {
                     &context,
                     &cancelled,
                     crate::dictation::processor::Source::Dictation,
+                    None,
                 )
                 .unwrap()
         };
@@ -1334,6 +1364,7 @@ mod tests {
                     &context,
                     &cancelled,
                     crate::dictation::processor::Source::Dictation,
+                    None,
                 )
                 .unwrap(),
             "abcd"
@@ -1542,6 +1573,17 @@ mod tests {
             ids: &[&str],
             text: &str,
         ) -> std::result::Result<String, String> {
+            self.transform_heard(source, ids, text, None)
+        }
+
+        /// A call whose dictation's clip is `heard`.
+        fn transform_heard(
+            &self,
+            source: crate::dictation::processor::Source,
+            ids: &[&str],
+            text: &str,
+            heard: Option<HeardClip>,
+        ) -> std::result::Result<String, String> {
             let (response, result) = mpsc::sync_channel(1);
             self.worker.transform(
                 TransformationRequest {
@@ -1550,6 +1592,7 @@ mod tests {
                     text: text.into(),
                     context: ContextSnapshot::default(),
                     source,
+                    heard,
                     response,
                 },
                 &AtomicBool::new(false),
@@ -1770,6 +1813,7 @@ export default defineHexConfig({
                 text: "a".into(),
                 context: ContextSnapshot::default(),
                 source: crate::dictation::processor::Source::Dictation,
+                heard: None,
                 response,
             },
             &AtomicBool::new(false),

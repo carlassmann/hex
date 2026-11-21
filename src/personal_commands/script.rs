@@ -23,6 +23,7 @@ use rquickjs::{
 
 use super::io::{self, Capabilities, Io, Wake};
 use super::trust::Permissions;
+use crate::dictation::heard::HeardClip;
 
 const MEMORY_LIMIT: usize = 64 << 20;
 const STACK_LIMIT: usize = 1 << 20;
@@ -71,6 +72,9 @@ pub struct Script {
     deadline: Rc<Cell<Option<Instant>>>,
     registration: String,
     permissions: Permissions,
+    /// Some file calls `transcribeAgain`, so its calls get the longer default
+    /// timeout host APIs get.
+    transcribes_again: bool,
     /// The `RestrictTransformsToLoopback` managed preference: `fetch`
     /// reaches only this computer and no program runs (`crate::policy`).
     loopback_only: bool,
@@ -127,6 +131,10 @@ impl Script {
         record.sealed = true;
         let (host, registration) = loaded?;
         let permissions = super::trust::scan(&record.sources, record.child_process);
+        let transcribes_again = record
+            .sources
+            .iter()
+            .any(|(_, source)| source.contains("transcribeAgain"));
         Ok(Self {
             io,
             host,
@@ -135,6 +143,7 @@ impl Script {
             deadline,
             registration,
             permissions,
+            transcribes_again,
             loopback_only: crate::policy::Policy::current()
                 .locks(crate::policy::Lock::LoopbackTransforms),
         })
@@ -152,14 +161,21 @@ impl Script {
         &self.permissions
     }
 
+    /// Whether the config hears dictations again (`transcribeAgain`).
+    pub fn transcribes_again(&self) -> bool {
+        self.transcribes_again
+    }
+
     /// The config's registration as JSON.
     pub fn registration(&self) -> &str {
         &self.registration
     }
 
     /// Runs the transformation `id` over `text` within `limit`, with the host
-    /// APIs in `allowed`. Hex stopping (`stop`) ends it early. When it
-    /// returns, every request, timer, and program it started is over.
+    /// APIs in `allowed` and, for a dictation, its `heard` clip. Hex stopping
+    /// (`stop`) ends it early. When it returns, every request, timer, and
+    /// program it started is over, and its transcriptions are told to stop.
+    #[allow(clippy::too_many_arguments)]
     pub fn transform(
         &self,
         id: &str,
@@ -167,13 +183,14 @@ impl Script {
         context: &str,
         limit: Duration,
         allowed: Capabilities,
+        heard: Option<&HeardClip>,
         stop: &AtomicBool,
     ) -> Result<String, String> {
         let deadline = Instant::now() + limit;
         self.deadline.set(Some(deadline));
         self.io
             .borrow_mut()
-            .begin(deadline, allowed, self.loopback_only);
+            .begin(deadline, allowed, self.loopback_only, heard.cloned());
         let result = self.context.with(|ctx| {
             let outcome = (|| {
                 let host = self.host.clone().restore(&ctx)?;
@@ -435,7 +452,7 @@ impl Resolver for WorkspaceLoader {
         match name {
             COMMANDS => Ok(name.into()),
             HOST if base == ENTRY => Ok(name.into()),
-            IO if base == WEB || base == CHILD_PROCESS => Ok(name.into()),
+            IO if base == WEB || base == CHILD_PROCESS || base == HOST => Ok(name.into()),
             CHILD_PROCESS | "child_process" => {
                 self.record.borrow_mut().child_process = true;
                 Ok(CHILD_PROCESS.into())

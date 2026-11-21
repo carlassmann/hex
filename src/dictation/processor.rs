@@ -556,6 +556,17 @@ impl Profiles {
         labs: DictationLabs,
     ) -> Processed {
         let profile = self.select(context);
+        // An empty transcript has nothing to correct or rewrite, but its
+        // transformations may still hear the dictation again (Labs ›
+        // Transcribe again in transforms).
+        if transcript.trim().is_empty() {
+            return Processed {
+                text: String::new(),
+                nothing: false,
+                observation: None,
+                transformations: profile.transformations.clone(),
+            };
+        }
         // Labs › Spoken formatting, spoken symbols, and filler words only
         // make sense for speech: typed text starts from what is already
         // written and skips them.
@@ -2103,6 +2114,7 @@ mod tests {
             &context,
             &cancelled,
             Source::Dictation,
+            None,
         );
         assert_eq!(dictated.text, "i'll call ravi");
         let typed = profiles.process_cancellable_inner(
@@ -2279,9 +2291,16 @@ mod tests {
                     &context,
                     &AtomicBool::new(false),
                     Source::Dictation,
+                    None,
                 );
-                let actual =
-                    runtime.process(text, "en", &context, &transformations, Source::Dictation);
+                let actual = runtime.process(
+                    text,
+                    "en",
+                    &context,
+                    &transformations,
+                    Source::Dictation,
+                    None,
+                );
                 assert_eq!(actual.text, expected.text, "{}", clip["id"]);
                 assert_eq!(actual.nothing, expected.nothing);
                 assert_eq!(

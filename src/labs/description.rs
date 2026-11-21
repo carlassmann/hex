@@ -216,6 +216,9 @@ impl Feature {
             Self::RemoteTranscription => {
                 "Send dictations, meeting audio, and Annotate narration to another Hex, which transcribes them and runs its Output steps (meetings and Annotate get its raw transcript). When it can't be reached, this Mac does"
             }
+            Self::TranscribeAgain => {
+                "A transformation in hex.config.ts can ask for the dictation's audio to be transcribed again with another installed speech model (context.transcript.transcribeAgain), and transformations also run when a dictation heard speech but its transcript came back empty. The audio stays in memory"
+            }
             Self::CopyDictationAudio => {
                 "History entries with a kept recording gain Copy audio, and the menu bar or tray gains Copy last dictation audio: one file on the clipboard, ready to attach. Needs Keep recordings, and copies the kept audio without storing any itself"
             }

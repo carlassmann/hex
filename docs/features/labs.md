@@ -69,6 +69,10 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 ├── Confirm long cancels no labs.confirm_long_cancels        (every OS) once a dictation has recorded 10 s, its cancel shortcut's first press
 │                                        keeps recording and shows "Press again to discard this dictation" beside the HUD
 │                                        for 3 s; a second press inside that window cancels as before (#2837)
+├── Transcribe again in transforms no labs.transcribe_again (every OS)
+│                                        a dictation's transformations get context.transcript (model, language,
+│                                        duration, heardSpeech) and transcribeAgain({ model, language }), and run on an
+│                                        empty transcript that held speech (see Features below)
 ├── Failure notices no    labs.failure_notices                   when a dictation fails, its explanation sits beside the HUD for about 6 s, or until the next capture starts
 ├── Live typing     no    labs.live_typing                       (Linux Wayland) provisional words as an underlined input-method preedit in the focused field; the final text is committed there instead of pasted; on a compositor that offers no input method (GNOME) its card is disabled with a note and `hex labs` says so
 ├── Appearance      no    labs.appearance + labs.appearance_theme (system/light/dark, default system)  the main window is forced light or dark instead of following the system; the dictation HUD (including its onboarding and Sounds previews) and meeting recording pill remain dark. Other overlays follow the OS. On Windows the title bar follows too, through its background and light/dark mode; Windows 10 has no caption colour, so DWM keeps its own light or dark caption background (builds before 19041 keep the OS caption) while its text and buttons follow
@@ -4209,6 +4213,48 @@ vocabulary list itself (rewriting and search), and Linux's Terminal paste.
   first, and a `~/.local/bin` link `$PATH` doesn't name says so. While Labs ›
   Agent tools for captures is off, a note names that switch for the skill's
   `zoom`/`inspect`/`frames` commands.
+- Transcribe again in transforms (`transcribe-again`, every OS; off by
+  default, `labs.transcribe_again`): a spoken dictation's transformations
+  get `context.transcript` (`model`, `language`, `duration`, `heardSpeech`)
+  and `transcript.transcribeAgain({ model, language })`, which hears the same
+  audio with another installed speech model. The gate is where the clip is
+  kept: `HeardClip::keep` ([dictation/heard.rs](../../src/dictation/heard.rs))
+  copies the 16 kHz samples only while `labs::transcribe_again()` is on and a
+  custom transformation is selected, at the macOS `parakeet::submit`, the
+  Linux and Windows capture finishes, and remote dictations
+  (`local_api::remote`). Without a clip `context.transcript` is absent and the
+  `hex:io` `transcribe` op refuses.
+
+  ```ts
+  Dictation finished, lab on, custom transformation selected
+  ├── clip kept in memory (never written), shared with the transform call
+  ├── transcript empty
+  │   ├── speech detector heard speech -> processing runs, transforms get text ""
+  │   └── no speech (or no detector)   -> discarded quietly, as before
+  └── transformation calls transcribeAgain
+      ├── unknown model / missing language / not installed -> rejects, nothing loads
+      ├── 4th call in one transform call               -> rejects ("at most 3 times")
+      ├── dictation capturing or transcribing          -> waits for it first
+      └── transcription::service::transcribe_once      -> the engine's model when it matches, else a
+                                                         separate load; trimmed text resolves
+  Final text empty -> pastes nothing
+  ```
+
+  The transform's stop (timeout, settle) cancels a waiting or running call.
+  At most one call runs at a time across Hex. A config that mentions
+  `transcribeAgain` gets the 30 s default timeout. Not covered: programmatic
+  `/dictations` and typed text (no clip), and the remote path's per-piece
+  rewrites (`rewrite_rest`). `heardSpeech` is false without the speech
+  detector. Checks: the tests in [dictation/heard.rs](../../src/dictation/heard.rs)
+  (context, uninstalled model, language fallback, a dictation arriving first,
+  cancellation, the gate) and
+  [tests/transcribe_again.rs](../../src/personal_commands/tests/transcribe_again.rs)
+  (real scripts against a fake transcriber: context, empty transcript, the
+  per-call bound, the timeout default, the Modes stage on an empty
+  transcript); `transcribe_again_is_its_own_bit_and_off_by_default` in
+  [labs.rs](../../src/labs.rs). Linux and Windows listeners compile only in
+  CI. Not yet observed: a real dictation with the lab on and a real second
+  model.
 - Vocabulary files: the Vocabulary sheet gains **Import…** and **Export…**
   beside Add term (every OS; off by default, `labs.vocabulary_files`). Off,
   the sheet is exactly as before. Import opens one CSV or TXT file, refuses

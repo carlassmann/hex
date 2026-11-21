@@ -654,6 +654,12 @@ pub fn microphone_linger() -> Option<std::time::Duration> {
     }
 }
 
+/// A dictation's transformations can hear its clip again with another model
+/// (read as each dictation is submitted, which keeps the clip only then).
+pub fn transcribe_again() -> bool {
+    feature_on(Feature::TranscribeAgain)
+}
+
 /// Dictations go to the Hex this one is connected to (macOS; read as each
 /// dictation is submitted).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

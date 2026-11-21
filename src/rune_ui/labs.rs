@@ -1137,6 +1137,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::MeetingIndicatorDisplay => "lab-meeting-indicator-display",
         Feature::MeetingAudioSource => "lab-meeting-audio-source",
         Feature::MiddleMouseDictation => "lab-middle-mouse-dictation",
+        Feature::TranscribeAgain => "lab-transcribe-again",
     }
 }
 

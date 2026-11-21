@@ -50,6 +50,8 @@ struct Job {
     language: String,
     /// The clip, kept for History while Labs › Keep recordings is on.
     recording: Option<crate::history::Recording>,
+    /// The clip, for transformations to hear again (Labs › Transcribe again).
+    heard: Option<crate::dictation::heard::HeardClip>,
     /// `hex dictation stop --print`: the text goes here, never pasted.
     print: Option<PrintReply>,
     /// The shortcut that started this capture: dictation, Dictate without
@@ -333,6 +335,12 @@ pub(crate) fn run(
                         stop_phrase_only = true;
                         return Ok(String::new());
                     }
+                    // Labs › Transcribe again: missed speech reaches transforms.
+                    PreparedTranscript::Empty
+                        if crate::dictation::heard::held_speech(job.heard.as_ref()) =>
+                    {
+                        String::new()
+                    }
                     PreparedTranscript::Empty => {
                         if let Some(session) = job.typing.take() {
                             session.cancel();
@@ -382,6 +390,7 @@ pub(crate) fn run(
                     inference_ms,
                     started,
                     job.recording.take(),
+                    job.heard.take(),
                     job.typing.take(),
                     job.context.finish(),
                     job.by_shortcut,
@@ -1419,17 +1428,19 @@ fn submit_capture(
             let audio_ms = clip.duration_ms();
             let stream = clip.take_stream();
             let samples = clip.into_transcription_samples();
-            let language = engine
+            let selection = engine
                 .held_selection()
-                .unwrap_or_else(|| crate::app_settings::transcription_selection().1)
-                .language;
+                .unwrap_or_else(|| crate::app_settings::transcription_selection().1);
             let recording = crate::history::Recording::keep(&samples);
+            let heard = crate::dictation::heard::HeardClip::keep(&selection, &samples);
+            let language = selection.language;
             let job = OutputJob::Dictation(Box::new(Job {
                 transcript: engine.finish(stream, samples)?,
                 context,
                 audio_ms,
                 language,
                 recording,
+                heard,
                 print,
                 flavour,
                 typing: typing.map(|CaptureTyping { session, .. }| session),
@@ -2011,6 +2022,7 @@ mod tests {
             2_000,
             0,
             Instant::now(),
+            None,
             None,
             None,
             Default::default(),

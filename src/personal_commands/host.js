@@ -2,8 +2,32 @@
 // and the transformation calls it makes, one transformation at a time so each
 // runs under its own timeout. Values cross as JSON strings.
 
+import io from "hex:io"
+
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value)
-const parse = (json) => Object.freeze(JSON.parse(json))
+
+// `context.transcript.transcribeAgain`: the dictation's clip heard again by
+// another installed speech model (Labs › Transcribe again in transforms).
+function transcribeAgain(options) {
+  if (!isRecord(options) || typeof options.model !== "string") {
+    throw new TypeError("transcribeAgain needs { model: string, language?: string }")
+  }
+  if (options.language !== undefined && typeof options.language !== "string") {
+    throw new TypeError("transcribeAgain's language must be a string")
+  }
+  const spec = JSON.stringify({ model: options.model, language: options.language })
+  return new Promise((resolve, reject) => {
+    io.start("transcribe", spec, resolve, (message) => reject(new Error(message)))
+  })
+}
+
+function contextFrom(json) {
+  const context = JSON.parse(json)
+  if (isRecord(context.transcript)) {
+    context.transcript = Object.freeze({ ...context.transcript, transcribeAgain })
+  }
+  return Object.freeze(context)
+}
 
 function registerTransformations(config, transforms) {
   if (config.transformations === undefined) return []
@@ -36,7 +60,7 @@ export function install(config) {
     async transform(id, text, contextJson) {
       const transform = transforms.get(id)
       if (transform === undefined) throw new Error(`Unknown transformation: ${id}`)
-      const output = await transform(text, parse(contextJson))
+      const output = await transform(text, contextFrom(contextJson))
       if (typeof output !== "string") throw new Error(`Transformation ${id} did not return a string`)
       return output
     },

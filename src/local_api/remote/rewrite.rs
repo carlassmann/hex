@@ -116,7 +116,7 @@ impl EarlyRewrite {
             .name("remote-piece-rewrite".into())
             .spawn(move || {
                 let started = Instant::now();
-                let processed = super::process(&raw, application, Some(RECORDING_DEADLINE));
+                let processed = super::process(&raw, application, Some(RECORDING_DEADLINE), None);
                 let latency_ms = started.elapsed().as_millis() as u64;
                 tracing::info!(
                     piece = index,

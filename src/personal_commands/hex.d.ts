@@ -115,6 +115,29 @@ declare module "@hex/commands" {
     readonly browserHost?: string
     readonly browserUrl?: string
     readonly windowTitle?: string
+    /**
+     * The dictation's audio, for transformations of a spoken dictation while
+     * Labs › Transcribe again in transforms is on. Absent otherwise.
+     */
+    readonly transcript?: Transcript
+  }
+
+  export interface Transcript {
+    /** The speech model that heard it, such as `"parakeet_v3"`. */
+    readonly model: string
+    /** The dictation language; absent when the model detected it. */
+    readonly language?: string
+    /** Seconds of audio. */
+    readonly duration: number
+    /** Whether the speech detector heard speech, even when the text is empty. */
+    readonly heardSpeech: boolean
+    /**
+     * Transcribes the same audio with another installed model, after any
+     * dictation waiting for the model. `language` defaults to the dictation's
+     * when the model has it. Rejects when the model isn't installed or lacks
+     * the language. At most 3 times per transform call.
+     */
+    transcribeAgain(options: { readonly model: string; readonly language?: string }): Promise<string>
   }
 
   export interface HandlerArguments<Captures extends UntypedCaptures = Readonly<Record<string, string>>> {
@@ -147,8 +170,8 @@ declare module "@hex/commands" {
     readonly transform: Transformation
     /**
      * Milliseconds, 1 to 60000. Defaults to 1000, or 30000 when the config
-     * uses `fetch` or `node:child_process`. When it runs out, Hex aborts its
-     * requests and ends every program it started.
+     * uses `fetch`, `node:child_process`, or `transcribeAgain`. When it runs
+     * out, Hex aborts its requests and ends every program it started.
      */
     readonly timeout?: number
   }

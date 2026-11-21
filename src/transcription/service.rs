@@ -217,6 +217,74 @@ impl TranscriptionServiceHandle {
     }
 }
 
+/// Whether `selection` can run now without a download.
+pub fn is_ready(selection: &TranscriptionSelection) -> bool {
+    let model = crate::transcription::models::definition(selection.model);
+    crate::transcription::readiness::is_ready(&model, &selection.language)
+}
+
+/// How often [`transcribe_once`] looks at its caller's stop flag.
+const ONCE_POLL: Duration = Duration::from_millis(50);
+
+/// Transcribes `clip` with `selection` on a service of its own: it runs on
+/// the dictation engine's model when that is the one asked for, yielding to
+/// dictation, or loads its own copy for this run. Blocks until the text, the
+/// `deadline`, or `stop`; a failure is worded for a person.
+pub fn transcribe_once(
+    selection: TranscriptionSelection,
+    clip: AudioClip,
+    deadline: Duration,
+    stop: &AtomicBool,
+) -> std::result::Result<String, String> {
+    let (mut service, handle) =
+        TranscriptionService::start().map_err(|error| format!("{error:#}"))?;
+    let admission = handle
+        .admit_audio()
+        .ok_or_else(|| describe(TranscriptionServiceError::QueueFull))?;
+    let result = handle
+        .transcribe(selection, clip, admission, TimestampLevel::None)
+        .map_err(describe)
+        .and_then(|job| wait_for(&job, Instant::now() + deadline, stop));
+    // The worker runs until every sender is gone; the handle holds one, so
+    // keeping it would make the shutdown wait forever after the result.
+    drop(handle);
+    service.shutdown();
+    result.map(|transcript| transcript.text.trim().to_string())
+}
+
+fn wait_for(
+    job: &TranscriptionJob,
+    deadline: Instant,
+    stop: &AtomicBool,
+) -> std::result::Result<Transcript, String> {
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return Err(describe(TranscriptionServiceError::Cancelled));
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err("Transcribing took too long.".into());
+        }
+        match job.wait_timeout(left.min(ONCE_POLL)) {
+            Ok(Some(result)) => return result.map_err(describe),
+            Ok(None) => {}
+            Err(error) => return Err(describe(error)),
+        }
+    }
+}
+
+fn describe(error: TranscriptionServiceError) -> String {
+    match error {
+        TranscriptionServiceError::QueueFull => "Another transcription is running.".into(),
+        TranscriptionServiceError::Unavailable => "Transcription stopped.".into(),
+        TranscriptionServiceError::Cancelled => "Transcription was cancelled.".into(),
+        TranscriptionServiceError::Timestamps => "The model cannot give these timings.".into(),
+        TranscriptionServiceError::Model(error) | TranscriptionServiceError::Inference(error) => {
+            error
+        }
+    }
+}
+
 impl Drop for AudioAdmission {
     fn drop(&mut self) {
         self.0.store(false, Ordering::Release);
@@ -253,6 +321,15 @@ impl AudioClip {
     /// The 16 kHz mono samples.
     pub fn samples(&self) -> &[f32] {
         &self.samples
+    }
+
+    /// A clip of 16 kHz mono `samples` already in memory.
+    pub fn from_samples(samples: Vec<f32>) -> Self {
+        let duration_ms = samples.len() as u64 * 1_000 / 16_000;
+        Self {
+            samples,
+            duration_ms,
+        }
     }
 
     pub fn decode_wav<R: Read + Seek>(reader: R) -> std::result::Result<Self, AudioError> {

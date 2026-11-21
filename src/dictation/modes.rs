@@ -37,7 +37,8 @@ impl ModeRuntime {
     }
 
     /// Speech preparation, Global corrections, mode corrections, rewrite,
-    /// and transformations, through the same profiles macOS uses.
+    /// and transformations, through the same profiles macOS uses. A
+    /// dictation's `heard` clip goes to its transformations.
     pub fn process(
         &self,
         raw_text: &str,
@@ -45,6 +46,7 @@ impl ModeRuntime {
         context: &crate::dictation::context::ContextSnapshot,
         transformations: &crate::personal_commands::TransformationClient,
         source: crate::dictation::processor::Source,
+        heard: Option<&crate::dictation::heard::HeardClip>,
     ) -> Processed {
         self.process_cancellable(
             raw_text,
@@ -53,11 +55,13 @@ impl ModeRuntime {
             transformations,
             &AtomicBool::new(false),
             source,
+            heard,
         )
     }
 
     /// [`Self::process`] with a cancellation flag the stages check, for work
     /// that ends early when Hex quits.
+    #[allow(clippy::too_many_arguments)]
     pub fn process_cancellable(
         &self,
         raw_text: &str,
@@ -66,11 +70,12 @@ impl ModeRuntime {
         transformations: &crate::personal_commands::TransformationClient,
         cancelled: &AtomicBool,
         source: crate::dictation::processor::Source,
+        heard: Option<&crate::dictation::heard::HeardClip>,
     ) -> Processed {
         let mut processed = self
             .profiles
             .process_cancellable(raw_text, language, context, cancelled, source);
-        processed.apply_transformations(transformations, context, cancelled, source);
+        processed.apply_transformations(transformations, context, cancelled, source, heard);
         processed
     }
 
@@ -88,7 +93,7 @@ impl ModeRuntime {
         let mut processed = self
             .profiles
             .process_api_cancellable(raw_text, language, context, cancelled, source);
-        processed.apply_transformations(transformations, context, cancelled, source);
+        processed.apply_transformations(transformations, context, cancelled, source, None);
         processed
     }
 }
@@ -336,6 +341,7 @@ mod tests {
             &context,
             &transformations,
             crate::dictation::processor::Source::Dictation,
+            None,
         );
 
         assert_eq!(processed.text, "Use OpenCode in Hex.");
@@ -355,6 +361,7 @@ mod tests {
             &crate::dictation::context::ContextSnapshot::default(),
             &transformations,
             crate::dictation::processor::Source::Dictation,
+            None,
         );
 
         assert_eq!(processed.text, "keep opencode exact.");

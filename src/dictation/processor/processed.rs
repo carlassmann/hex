@@ -35,12 +35,14 @@ impl Processed {
 
     /// Runs the selected transformations, the last processing stage. The chain
     /// is one stage: a failure keeps the previous text and records the error.
+    /// A dictation's `heard` clip is theirs to hear again.
     pub fn apply_transformations(
         &mut self,
         client: &crate::personal_commands::TransformationClient,
         context: &ContextSnapshot,
         cancelled: &AtomicBool,
         source: Source,
+        heard: Option<&crate::dictation::heard::HeardClip>,
     ) {
         if self.transformations.is_empty() || cancelled.load(Ordering::Acquire) {
             return;
@@ -52,6 +54,7 @@ impl Processed {
             context,
             cancelled,
             source,
+            heard,
         );
         let observation = self
             .observation

@@ -434,7 +434,7 @@ fn transcribe_and_process(
         }
     };
     let selection = settings.transcription.clone();
-    if !super::model_ready(&selection) {
+    if !crate::transcription::service::is_ready(&selection) {
         return Some(HttpResponse::code(409, "model-not-ready"));
     }
     let Some(admission) = context.transcription.admit_audio() else {
@@ -451,6 +451,7 @@ fn transcribe_and_process(
         Err(response) => return response,
     };
     let duration_ms = clip.duration_ms;
+    let heard = crate::dictation::heard::HeardClip::keep(&selection, clip.samples());
     let raw = match wait_for_transcript(
         stream,
         selection,
@@ -462,7 +463,7 @@ fn transcribe_and_process(
         Ok(raw) => raw,
         Err(response) => return response,
     };
-    let text = process(&raw, application, None).text;
+    let text = process(&raw, application, None, heard.as_ref()).text;
     tracing::info!(duration_ms, "remote dictation processed");
     Some(HttpResponse::json(
         200,
@@ -476,11 +477,13 @@ fn transcribe_and_process(
 
 /// Runs this machine's Modes on a device's transcript, as if it were dictated
 /// here into `application`.
-/// Runs the Modes on `raw`; `deadline` replaces their OpenCode deadline.
+/// Runs the Modes on `raw`; `deadline` replaces their OpenCode deadline. The
+/// transformations may hear the `heard` clip again.
 pub(super) fn process(
     raw: &str,
     application: String,
     deadline: Option<std::time::Duration>,
+    heard: Option<&crate::dictation::heard::HeardClip>,
 ) -> crate::dictation::processor::Processed {
     let mut settings = match crate::app_settings::AppSettings::load() {
         Ok(settings) => settings,
@@ -520,6 +523,7 @@ pub(super) fn process(
             &processing_context,
             &cancelled,
             crate::dictation::processor::Source::Dictation,
+            heard,
         );
     }
     if let Some(fallback) = processed

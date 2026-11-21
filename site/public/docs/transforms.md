@@ -42,11 +42,56 @@ export default defineHexConfig({
 describes the foreground app, each field present only when known:
 
 ```ts
-{ application?: string, browserHost?: string, browserUrl?: string, windowTitle?: string, source?: 'dictation' | 'typed-text' }
+{ application?: string, browserHost?: string, browserUrl?: string, windowTitle?: string, source?: 'dictation' | 'typed-text', transcript?: Transcript }
 ```
 
 `source` is `"dictation"` for spoken dictation and `"typed-text"` for Labs ›
 Transform typed text (Linux), which runs the same steps on text already typed.
+
+## Hearing a dictation again
+
+With Labs › Transcribe again in transforms on (off by default), a spoken
+dictation's `context` also has `transcript`:
+
+```ts
+context.transcript?: {
+  model: string            // the speech model that heard it, e.g. "parakeet_v3"
+  language?: string        // absent when the model detected the language
+  duration: number         // seconds of audio
+  heardSpeech: boolean     // the speech detector heard speech
+  transcribeAgain(options: { model: string, language?: string }): Promise<string>
+}
+```
+
+- `transcribeAgain` transcribes the same audio with another speech model and
+  resolves its trimmed text. `model` is a model id from `hex model list`
+  (`cohere_transcribe`, `whisper_large_v3_turbo`, …); `language` defaults to
+  the dictation's when that model has it.
+- It rejects when the model isn't installed (it never downloads one), doesn't
+  have the language, or Hex has no model by that name. At most 3 calls per
+  transform call.
+- It waits for any dictation already waiting for the model, never loads a
+  second copy of the model dictation uses, and may load another model for the
+  call. The audio stays in memory and is never written anywhere.
+- With the lab on, transforms also run when the transcript is empty but
+  `heardSpeech` is true, so `text` can be `""`. An empty result still pastes
+  nothing.
+- `transcript` is absent for typed text, programmatic dictations through the
+  local API, and while the lab is off. Remote dictations (a paired phone) have
+  it.
+- A config that mentions `transcribeAgain` gets the 30 s default timeout.
+
+Example, retrying an empty transcript with Cohere:
+
+```ts
+"retry-empty": {
+  name: "Retry empty dictations",
+  transform: async (text, context) =>
+    text || !context.transcript?.heardSpeech
+      ? text
+      : context.transcript.transcribeAgain({ model: "cohere_transcribe" }),
+},
+```
 
 Selected transforms run in order after the mode's word replacements and
 optional AI rewrite. Don't reuse the built-in ids `lowercase`,
@@ -193,7 +238,8 @@ On a managed Mac, an organization can turn transforms off
 ## Timeouts, limits, and fallback
 
 - Each transform has `timeout` milliseconds: 1000 by default, 30000 when the
-  config uses `fetch` or `node:child_process`, 60000 at most. That limit covers
+  config uses `fetch`, `node:child_process`, or `transcribeAgain`, 60000 at
+  most. That limit covers
   everything the transform waits for.
 - When a transform finishes or runs out of time, Hex abandons its requests and
   ends every program it started, with the program's children (a process group

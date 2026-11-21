@@ -30,8 +30,14 @@ involved.
   config in Hex's Output pane; any edit asks again. Use `execFile` with an
   argument array (and the `input` option for stdin) for anything involving
   dictated text, never a shell command built from it.
+- With Labs › Transcribe again in transforms on, a dictation's
+  `context.transcript` names the speech model, language, duration, and
+  whether speech was heard, and `context.transcript.transcribeAgain({ model,
+  language })` hears the same audio with another installed model (at most 3
+  times per call). Transformations then also run on an empty transcript that
+  held speech.
 - Each transformation has `timeout` milliseconds: 1000 by default, 30000 when
-  the config uses `fetch` or programs, 60000 at most. Past it, Hex aborts its
+  the config uses `fetch`, programs, or `transcribeAgain`, 60000 at most. Past it, Hex aborts its
   requests, ends its programs, and pastes the text unchanged. Scripts share a
   64 MiB memory limit.
 

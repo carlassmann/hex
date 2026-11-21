@@ -1,6 +1,6 @@
-//! Remote transcription and paired devices' translated strings (this fork's
-//! own), kept beside [`super::TRANSLATIONS`] so the main table stays under
-//! the source cap.
+//! This fork's own translated strings (remote transcription, paired devices,
+//! Transcribe again in transforms), kept beside [`super::TRANSLATIONS`] so
+//! the main table stays under the source cap.
 
 use std::collections::HashMap;
 
@@ -52,6 +52,8 @@ pub(super) const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Its Output steps aren't copied yet, so a fallback here uses this Mac's own", ["Jego kroki Wyjścia nie zostały jeszcze skopiowane, więc awaryjnie ten Mac używa własnych", "尚未复制它的输出步骤，因此这里的后备使用这台 Mac 自己的步骤", "出力ステップはまだコピーされていないため、ここでの代替処理はこの Mac 自身のものを使います", "Seine Ausgabe-Schritte sind noch nicht kopiert, daher nutzt ein Ausweichen hier die dieses Macs", "Sus pasos de Salida aún no se han copiado, así que el respaldo aquí usa los de este Mac", "Його кроки виводу ще не скопійовано, тож резервний варіант тут використовує власні кроки цього Mac"]),
     ("When it can't be reached, this Mac uses a copy of its Output steps and vocabulary", ["Gdy jest nieosiągalny, ten Mac używa kopii jego kroków Wyjścia i słownictwa", "无法连接时，这台 Mac 使用它的输出步骤和词汇的副本", "接続できないときは、この Mac がその出力ステップと語彙のコピーを使います", "Ist es nicht erreichbar, nutzt dieser Mac eine Kopie seiner Ausgabe-Schritte und seines Vokabulars", "Si no está disponible, este Mac usa una copia de sus pasos de Salida y su vocabulario", "Коли він недоступний, цей Mac використовує копію його кроків виводу та словника"]),
     ("It transcribes with {theirs}, this Mac with {ours}. Choose the same model in General for matching text", ["Tamten transkrybuje za pomocą {theirs}, ten Mac za pomocą {ours}. Wybierz ten sam model w Ogólnych, aby tekst był zgodny", "它使用 {theirs} 转写，这台 Mac 使用 {ours}。在通用中选择相同的模型以获得一致的文本", "向こうは {theirs}、この Mac は {ours} で文字起こしします。一致したテキストにするには一般で同じモデルを選んでください", "Es transkribiert mit {theirs}, dieser Mac mit {ours}. Wähle unter Allgemein dasselbe Modell für gleichen Text", "Transcribe con {theirs}; este Mac, con {ours}. Elige el mismo modelo en General para obtener el mismo texto", "Він транскрибує за допомогою {theirs}, цей Mac — {ours}. Виберіть ту саму модель у Загальних, щоб текст збігався"]),
+    ("Transcribe again in transforms", ["Ponowna transkrypcja w przekształceniach", "在转换中重新转写", "変換で再び文字起こし", "Erneut transkribieren in Transformationen", "Volver a transcribir en transformaciones", "Повторна транскрипція в перетвореннях"]),
+    ("Your transformations can hear a dictation again with another speech model", ["Twoje przekształcenia mogą ponownie przesłuchać dyktowanie innym modelem mowy", "你的转换可以用另一个语音模型重新识别一次听写", "変換で、音声入力をもう一度別の音声モデルで聞き直せます", "Deine Transformationen können ein Diktat mit einem anderen Sprachmodell erneut hören", "Tus transformaciones pueden volver a escuchar un dictado con otro modelo de voz", "Ваші перетворення можуть ще раз прослухати диктування іншою моделлю мовлення"]),
 ];
 
 /// Russian for the strings above, chained into [`super::russian::table`].
@@ -82,6 +84,8 @@ pub(super) const RUSSIAN: &[(&str, &str)] = &[
     ("Its Output steps aren't copied yet, so a fallback here uses this Mac's own", "Его шаги вывода ещё не скопированы, поэтому при резервной обработке этот Mac использует свои"),
     ("When it can't be reached, this Mac uses a copy of its Output steps and vocabulary", "Если он недоступен, этот Mac использует копию его шагов вывода и словаря"),
     ("It transcribes with {theirs}, this Mac with {ours}. Choose the same model in General for matching text", "Он транскрибирует с помощью {theirs}, этот Mac — с помощью {ours}. Выберите ту же модель в разделе «Общие», чтобы текст совпадал"),
+    ("Transcribe again in transforms", "Повторная транскрипция в преобразованиях"),
+    ("Your transformations can hear a dictation again with another speech model", "Ваши преобразования могут ещё раз прослушать диктовку другой моделью речи"),
 ];
 
 /// French for the strings above, chained into [`super::french::table`].
@@ -112,6 +116,8 @@ pub(super) const FRENCH: &[(&str, &str)] = &[
     ("Its Output steps aren't copied yet, so a fallback here uses this Mac's own", "Ses étapes de Sortie ne sont pas encore copiées : en secours, ce Mac utilise les siennes"),
     ("When it can't be reached, this Mac uses a copy of its Output steps and vocabulary", "S'il est injoignable, ce Mac utilise une copie de ses étapes de Sortie et de son vocabulaire"),
     ("It transcribes with {theirs}, this Mac with {ours}. Choose the same model in General for matching text", "Il transcrit avec {theirs}, ce Mac avec {ours}. Choisissez le même modèle dans Général pour un texte identique"),
+    ("Transcribe again in transforms", "Retranscrire dans les transformations"),
+    ("Your transformations can hear a dictation again with another speech model", "Vos transformations peuvent réécouter une dictée avec un autre modèle vocal"),
 ];
 
 /// Brazilian Portuguese for the strings above, chained into [`super::portuguese::table`].
@@ -142,4 +148,6 @@ pub(super) const PORTUGUESE: &[(&str, &str)] = &[
     ("Its Output steps aren't copied yet, so a fallback here uses this Mac's own", "As etapas de Saída dele ainda não foram copiadas, então o modo reserva aqui usa as deste Mac"),
     ("When it can't be reached, this Mac uses a copy of its Output steps and vocabulary", "Quando ele não está acessível, este Mac usa uma cópia das etapas de Saída e do vocabulário dele"),
     ("It transcribes with {theirs}, this Mac with {ours}. Choose the same model in General for matching text", "Ele transcreve com {theirs}, este Mac com {ours}. Escolha o mesmo modelo em Geral para obter o mesmo texto"),
+    ("Transcribe again in transforms", "Transcrever de novo nas transformações"),
+    ("Your transformations can hear a dictation again with another speech model", "Suas transformações podem ouvir um ditado de novo com outro modelo de voz"),
 ];

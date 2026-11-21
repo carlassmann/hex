@@ -26,6 +26,11 @@ enum PairedHexStore {
         set { defaults.set(newValue, forKey: fallbackKey) }
     }
 
+    /// Whether a Hex is paired, without reading its token: cheap enough for the keyboard's poll.
+    static var isPaired: Bool {
+        defaults.data(forKey: key) != nil
+    }
+
     static func load() -> (hex: PairedHex, token: String)? {
         if let data = defaults.data(forKey: key),
            let hex = try? JSONDecoder().decode(PairedHex.self, from: data),

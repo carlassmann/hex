@@ -1326,16 +1326,19 @@ final class KeyboardViewController: UIInputViewController {
         let translationLanguages = Self.translationLanguages
         let hinglish = HinglishSettings().isEnabled
         let greeklish = GreeklishSettings().isEnabled
+        // A paired Hex hears every language with its own model, so there's nothing to pick.
+        let paired = PairedHexStore.isPaired
         let signature = [
             explicit ?? "", automatic ?? "", recent.joined(separator: ","), removed.joined(separator: ","),
             "\(supported.count)",
+            "\(paired)",
             target ?? "", "\(hinglish)", "\(greeklish)",
             translationLanguage ?? "", "\(translationLanguages?.count ?? -1)",
         ].joined(separator: "|")
         guard signature != languageSignature else { return }
         languageSignature = signature
-        let choices = settings.keyboardLanguageChoices(hinglish: hinglish, greeklish: greeklish)
-        let more = DictationLanguageSwitch.more(choices: choices, preferred: Locale.preferredLanguages, supported: supported)
+        let choices = paired ? [] : settings.keyboardLanguageChoices(hinglish: hinglish, greeklish: greeklish)
+        let more = paired ? [] : DictationLanguageSwitch.more(choices: choices, preferred: Locale.preferredLanguages, supported: supported)
         if viewModel.dictationLanguage != explicit { viewModel.dictationLanguage = explicit }
         if viewModel.automaticLanguage != automatic { viewModel.automaticLanguage = automatic }
         if viewModel.languageChoices != choices { viewModel.languageChoices = choices }

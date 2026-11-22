@@ -191,6 +191,14 @@ struct KeyboardSettingsPage: View {
                     .frame(minHeight: 50)
                 }
 
+                SettingsDivider()
+
+                SettingsToggleRow(
+                    title: String(localized: "Language switch"),
+                    detail: String(localized: "Pick the dictation language in the top bar"),
+                    isOn: binding(\.languageSwitch)
+                )
+
                 if fullKeyboard {
                     KeyboardLanguagesRow()
 

@@ -103,6 +103,7 @@ struct FullKeyboardSettings {
         static let commaPeriodKeys = "experiments.commaPeriodKeys"
         static let quickAccents = "experiments.quickAccents"
         static let emojiShortcodes = "experiments.emojiShortcodes"
+        static let languageSwitch = "settings.keyboardLanguageSwitch"
     }
 
     private let defaults: UserDefaults?
@@ -408,6 +409,14 @@ struct FullKeyboardSettings {
                 ?? .whenSwitching
         }
         nonmutating set { defaults?.set(newValue.rawValue, forKey: Key.dictationBarAutoStart) }
+    }
+
+    /// Settings › Keyboard › Language switch: the top bar's dictation-language and Translate to
+    /// switch. On by default; off, someone who dictates in one language (or on a paired Hex,
+    /// which hears every language) keeps the bar clear. Translation itself keeps its setting.
+    var languageSwitch: Bool {
+        get { defaults?.object(forKey: Key.languageSwitch) as? Bool ?? true }
+        nonmutating set { defaults?.set(newValue, forKey: Key.languageSwitch) }
     }
 
     /// Where the full keyboard's Hex key sits for `hexKeyOnLeft`.

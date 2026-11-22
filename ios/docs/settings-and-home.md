@@ -48,7 +48,8 @@ list starts at the top. The pages, one file each in `HEXMobile/Settings/`
   the dictation bar, so testers who turned that experiment off keep the bar;
   an iPad follows the same choice, where until build 117 it always showed the bar), with
   Auto-start (Never, On switch by default, or Always) below it while the dictation bar is
-  chosen, and Languages, Hex key and Number row (off by default) while Full is; under
+  chosen, Language switch (on by default; off hides the top bar's dictation-language and
+  Translate to switch, in this fork), and Languages, Hex key and Number row (off by default) while Full is; under
   **Typing**, only while Full is chosen, Auto-capitalization, Autocorrect (with Spatial
   autocorrect below it while it's on), Swipe typing, Suggest swear words and Vocabulary (Hex's
   custom vocabulary list, how many words it holds); under **Feedback**, Key pop-ups (Full

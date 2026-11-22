@@ -12,7 +12,7 @@ Hex, the keyboard's own recordings go to it instead:
 `HEXKeyboard/KeyboardRemoteTranscription.swift`, with Apple Speech only when
 that Hex can't answer and the fallback is on; the pairing lives in the App
 Group and its Keychain group, `HEXShared/PairedHexStore.swift`; while paired the keyboard shows no
-dictation-language switch, since the paired Hex's model hears every language), and Hex removes each capture's file after
+dictation-language or Translate to switch, since the paired Hex's model hears every language), and Hex removes each capture's file after
 inference, cancellation, or failure.
 
 This README is the map. Each area's detail lives in `docs/`, and the doc for

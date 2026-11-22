@@ -1179,7 +1179,8 @@ final class KeyboardViewController: UIInputViewController {
 
     /// The full keyboard's emoji panel in place of the dictation bar, at the full keyboard's
     /// height (the bar's 146 pt can't hold its grid); its back key (in place of ABC) goes back to the bar. No
-    /// search: its query is typed on letter keys the bar doesn't have.
+    /// search: its query is typed on letter keys the bar doesn't have. Below the strip a docked
+    /// iPad keeps clear for its shortcut bar (`barTopInset`).
     private func openBarEmojiPanel() {
         guard barEmojiPanel == nil, fullKeyboard == nil, let surface else { return }
         let language = viewModel.effectiveLanguage
@@ -1221,12 +1222,12 @@ final class KeyboardViewController: UIInputViewController {
         NSLayoutConstraint.activate([
             panel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             panel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            panel.topAnchor.constraint(equalTo: view.topAnchor),
+            panel.topAnchor.constraint(equalTo: view.topAnchor, constant: barTopInset),
             panel.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         surface.isHidden = true
         barEmojiPanel = panel
-        applyHeight(KeyboardLayout.height(for: orientation))
+        applyHeight(KeyboardLayout.height(for: orientation) + barTopInset)
         panel.fill(before: textDocumentProxy.documentContextBeforeInput)
     }
 

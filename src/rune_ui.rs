@@ -63,7 +63,6 @@ mod platform_settings;
 pub(crate) mod playground;
 mod practice;
 mod remote;
-use remote::edit as remote_edit;
 mod scenes;
 #[cfg(hex_capture)]
 mod scrawl;
@@ -917,10 +916,10 @@ impl Ui {
 
     fn commit(&mut self, mut candidate: AppSettings) -> bool {
         let submitted = candidate.clone();
-        let (local, remote) = remote_edit::split(self, &candidate);
+        let (local, remote) = remote::edit::split(self, &candidate);
         match &mut self.service {
             Service::Live(backend) => match backend.save(&self.settings, &local) {
-                Ok(saved) => candidate = remote_edit::rejoined(saved, &submitted, &remote),
+                Ok(saved) => candidate = remote::edit::rejoined(saved, &submitted, &remote),
                 Err(error) => {
                     self.error = Some(format!("{error:#}"));
                     return false;
@@ -934,7 +933,7 @@ impl Ui {
             self.vocabulary.reload(&candidate.vocabulary);
         }
         self.lab_store.rebase_labs(&submitted.labs, &candidate.labs);
-        remote_edit::send(self, remote, &submitted);
+        remote::edit::send(self, remote, &submitted);
         self.settings = candidate;
         self.modes.committed(&self.settings);
         self.draft_since = None;
@@ -1142,7 +1141,7 @@ impl Ui {
         if service.source.revision == 0 && self.service_settings.as_ref() == Some(&service) {
             return false;
         }
-        let changed = self.show(remote_edit::shown(self, service.clone()));
+        let changed = self.show(remote::edit::shown(self, service.clone()));
         self.service_settings = Some(service);
         changed
     }

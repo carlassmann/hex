@@ -73,6 +73,9 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 │                                        a dictation's transformations get context.transcript (model, language,
 │                                        duration, heardSpeech) and transcribeAgain({ model, language }), and run on an
 │                                        empty transcript that held speech (see Features below)
+├── Remote devices  no    labs.remote_devices (every OS)
+│                                        this Hex pairs devices (`hex remote pair`, a QR in the card) and transcribes
+│                                        their dictations with its model and Modes; serving starts when Hex starts
 ├── Failure notices no    labs.failure_notices                   when a dictation fails, its explanation sits beside the HUD for about 6 s, or until the next capture starts
 ├── Live typing     no    labs.live_typing                       (Linux Wayland) provisional words as an underlined input-method preedit in the focused field; the final text is committed there instead of pasted; on a compositor that offers no input method (GNOME) its card is disabled with a note and `hex labs` says so
 ├── Appearance      no    labs.appearance + labs.appearance_theme (system/light/dark, default system)  the main window is forced light or dark instead of following the system; the dictation HUD (including its onboarding and Sounds previews) and meeting recording pill remain dark. Other overlays follow the OS. On Windows the title bar follows too, through its background and light/dark mode; Windows 10 has no caption colour, so DWM keeps its own light or dark caption background (builds before 19041 keep the OS caption) while its text and buttons follow
@@ -3989,6 +3992,18 @@ resident against 284 MB) and the fallback loaded it once. Not yet observed:
 the skipped live stream of a shortcut dictation, and meetings or Annotate
 over `/remote/transcriptions`.
 
+Remote devices (`remote-devices`, every OS, off by default) gates serving:
+the local API opens the remote listener only with the lab on and serving
+enabled (`labs::remote_devices`, read as it starts), and `hex remote pair`
+refuses while it is off. `devices`, `revoke`, and `disable` still work, so a
+device can be unpaired with the lab off. Checks:
+`every_route_but_pairing_refuses_a_request_without_a_device_token` in
+[local_api/remote.rs](../../src/local_api/remote.rs),
+`a_paired_device_edits_only_the_mirrored_settings` in
+[remote/settings.rs](../../src/remote/settings.rs), and
+`a_pairing_code_works_once_and_its_device_can_be_revoked` in
+[remote/pairing.rs](../../src/remote/pairing.rs).
+
 Remote machines in the window
 ([rune_ui/remote.rs](../../src/rune_ui/remote.rs)), read only by a live window
 while Labs or Output shows, with the devices read again every 3 s:
@@ -3997,7 +4012,7 @@ while Labs or Output shows, with the devices read again every 3 s:
 Labs › Remote transcription on (macOS)
 ├── not connected  -> Connect to: address or pasted pair link + code -> Connect (off the UI thread)
 └── connected      -> Sends to <machine> (its URL) · Disconnect
-Labs › Remote devices (every OS)
+Labs › Remote devices on (every OS), in its card
 ├── Pair a device  -> serving on (restart note if it was off), one-time code, address
 │                     (Tailscale name looked up off the UI thread), QR of the pair link · Done
 └── each paired device -> Revoke

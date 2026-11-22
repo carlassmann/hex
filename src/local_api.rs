@@ -164,7 +164,8 @@ impl LocalApi {
     pub fn start(events: EventLog, options: LocalApiOptions) -> Result<Self> {
         let instance = crate::desktop::instance::acquire("local-api")?;
         let options = LocalApiOptions {
-            remote: options.remote || crate::remote::pairing::enabled(),
+            remote: options.remote
+                || (crate::labs::remote_devices() && crate::remote::pairing::enabled()),
             ..options
         };
         Self::start_bound(

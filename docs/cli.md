@@ -82,6 +82,13 @@ hex
 │   ├── route <capture> [--ask-jev]  what routing sees and decides; sends nothing
 │   └── inspect|zoom|frames|skill  Labs: read a capture for a coding agent (off by default)
 ├── screenshot [--pick]           Labs (macOS): shoot the display under the pointer and print the PNG's path; --pick opens the ⌘⇧4 picker
+├── remote                         Labs: share one Hex's model and Output steps (features/labs.md)
+│   ├── pair                       Remote devices: print a five-minute pair code, link, and QR; starts serving
+│   ├── devices | revoke <id>      the paired devices; unpair one
+│   ├── disable                    stop serving paired devices (after Hex restarts)
+│   ├── connect <address> <code>   Remote transcription: pair this Hex with one that serves
+│   ├── disconnect                 forget it
+│   └── send <wav> [--app <name>]  send a WAV there and print the processed text
 ├── labs [on|off <feature>]       list Labs features or turn one on/off; edits settings.json (features/labs.md)
 │   └── link <feature>             macOS: print hex://labs/<feature>, the link that opens Hex's Labs page on that lab's group
 ├── check-for-updates              check for an update now
@@ -89,6 +96,15 @@ hex
 ├── completions <shell>            print a completion script for hex
 └── logs [--process] [-n N] [-f]   tail live.ndjson (or process.log); no running Hex needed
 ```
+
+`remote` runs in the `hex` process and edits `remote.json` (the devices and
+their token hashes) or `remote-client.json` (this Hex's connection), both
+owner-only in the data folder; it needs no running Hex. `pair` refuses while
+Labs › Remote devices is off. Serving listens on its own port behind `tailscale
+serve`, separate from the local API, and answers only `/pair` and the
+`/remote/*` routes listed in [local_api/remote.rs](../src/local_api/remote.rs),
+each behind a paired device's token. A Hex that wasn't serving starts once it
+restarts.
 
 `dictation start` locks the recording, as a double tap would: `dictation stop`
 or the next shortcut press finishes it, and `dictation cancel` discards it.

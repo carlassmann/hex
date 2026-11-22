@@ -756,17 +756,6 @@
       "title": "Pause from menu bar"
     },
     {
-      "added": "2026-11-11",
-      "group": "dictation",
-      "groupTitle": "Dictation",
-      "id": "remote-transcription",
-      "oses": [
-        "macos"
-      ],
-      "summary": "Send dictations, meeting audio, and Annotate narration to another Hex, which transcribes them and runs its Output steps. When it can't be reached, this Mac does",
-      "title": "Remote transcription"
-    },
-    {
       "added": "2026-11-12",
       "group": "output",
       "groupTitle": "Output",
@@ -1035,6 +1024,43 @@
       ],
       "summary": "Hold the middle mouse button for half a second to start dictating hands-free, and again to finish. Escape cancels",
       "title": "Middle mouse dictation"
+    },
+    {
+      "added": "2026-11-11",
+      "group": "dictation",
+      "groupTitle": "Dictation",
+      "id": "remote-transcription",
+      "oses": [
+        "macos"
+      ],
+      "summary": "Send dictations, meeting audio, and Annotate narration to another Hex, which transcribes them and runs its Output steps. When it can't be reached, this Mac does",
+      "title": "Remote transcription"
+    },
+    {
+      "added": "2026-11-21",
+      "group": "dictation",
+      "groupTitle": "Dictation",
+      "id": "transcribe-again",
+      "oses": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "summary": "Your transformations can hear a dictation again with another speech model",
+      "title": "Transcribe again in transforms"
+    },
+    {
+      "added": "2026-11-22",
+      "group": "dictation",
+      "groupTitle": "Dictation",
+      "id": "remote-devices",
+      "oses": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "summary": "Transcribe for your iPhone or another Mac",
+      "title": "Remote devices"
     }
   ]
 }

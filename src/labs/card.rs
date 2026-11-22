@@ -104,6 +104,7 @@ impl Feature {
             Self::MiddleMouseDictation => "Middle mouse dictation",
             Self::RemoteTranscription => "Remote transcription",
             Self::TranscribeAgain => "Transcribe again in transforms",
+            Self::RemoteDevices => "Remote devices",
         }
     }
 
@@ -317,6 +318,7 @@ impl Feature {
             Self::TranscribeAgain => {
                 "Your transformations can hear a dictation again with another speech model"
             }
+            Self::RemoteDevices => "Transcribe for your iPhone or another Mac",
             Self::CopyDictationAudio => {
                 "Copy a kept dictation's audio as a file from History, the menu bar, or the tray; needs Keep recordings"
             }

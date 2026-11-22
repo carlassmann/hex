@@ -394,6 +394,8 @@ pub struct LabsSettings {
     /// Transformations can hear a dictation again with another speech
     /// model (`context.transcript.transcribeAgain`).
     pub transcribe_again: bool,
+    /// This Hex pairs and serves other devices (`hex remote pair`).
+    pub remote_devices: bool,
     /// Retired switches the `meeting-labs-settings` migration reads into
     /// `meetings.*` once: `meetings.stop_when_call_ends`,
     /// `meetings.export.descriptive_filenames`, `meetings.export.notes_file`,
@@ -618,6 +620,7 @@ impl Default for LabsSettings {
             groups: std::collections::BTreeMap::new(),
             remote_transcription: false,
             transcribe_again: false,
+            remote_devices: false,
             stop_when_call_ends: None,
             meeting_descriptive_filenames: None,
             meeting_notes_file: None,

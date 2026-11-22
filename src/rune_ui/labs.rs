@@ -1138,6 +1138,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::MeetingAudioSource => "lab-meeting-audio-source",
         Feature::MiddleMouseDictation => "lab-middle-mouse-dictation",
         Feature::TranscribeAgain => "lab-transcribe-again",
+        Feature::RemoteDevices => "lab-remote-devices",
     }
 }
 
@@ -1305,6 +1306,7 @@ fn extras(ui: &Ui, p: Paint, entry: &Row, layer: &mut Vec<El>) -> Option<El> {
             crate::screenshots::system_takes_shortcut(),
         )),
         Lab::Feature(Feature::RemoteTranscription) => Some(super::remote::connection(ui, p)),
+        Lab::Feature(Feature::RemoteDevices) => Some(super::remote::devices(ui, p)),
         _ => None,
     }
 }

@@ -654,6 +654,12 @@ pub fn microphone_linger() -> Option<std::time::Duration> {
     }
 }
 
+/// This Hex pairs and serves other devices (read as the local API starts and
+/// by `hex remote`).
+pub fn remote_devices() -> bool {
+    feature_on(Feature::RemoteDevices)
+}
+
 /// A dictation's transformations can hear its clip again with another model
 /// (read as each dictation is submitted, which keeps the clip only then).
 pub fn transcribe_again() -> bool {

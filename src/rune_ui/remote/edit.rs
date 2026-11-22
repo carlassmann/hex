@@ -13,6 +13,7 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, channel, sync_channel}
 
 use crate::app_settings::AppSettings;
 use crate::control::{ControlCommand, ControlReply};
+use crate::desktop::i18n::{tr, tr_named};
 use crate::dictation::vocabulary::VocabularyEntry;
 use crate::remote::settings::RemoteSettings;
 use crate::rune_ui::Ui;
@@ -130,7 +131,7 @@ pub(in crate::rune_ui) fn send(
     match sender.try_send(commands) {
         Ok(()) => edits.pending += 1,
         Err(_) => {
-            ui.error = Some("Too many edits waiting to reach the other Hex; try again".into())
+            ui.error = Some(tr("Too many edits waiting to reach the other Hex; try again").into())
         }
     }
 }
@@ -143,7 +144,7 @@ pub(in crate::rune_ui) fn poll(ui: &mut Ui) -> bool {
             Some(Ok(result)) => result,
             Some(Err(TryRecvError::Disconnected)) => {
                 ui.remote.edits = RemoteEdits::default();
-                Err("Sending edits stopped".into())
+                Err(tr("Sending edits stopped").into())
             }
             Some(Err(TryRecvError::Empty)) | None => return changed,
         };
@@ -180,13 +181,16 @@ fn start_worker() -> (
 
 fn run(commands: Vec<ControlCommand>) -> Result<(), String> {
     let connection = crate::remote::client::active()
-        .ok_or_else(|| "Remote transcription is off, so the edit wasn't sent".to_string())?;
+        .ok_or_else(|| tr("Remote transcription is off, so the edit wasn't sent").to_string())?;
     for command in commands {
         match crate::remote::settings::forward(&connection, command) {
             Ok(ControlReply::Error { message, .. }) => {
-                return Err(format!(
-                    "{} refused the edit: {message}",
-                    connection.machine_label
+                return Err(tr_named(
+                    "{machine} refused the edit: {message}",
+                    &[
+                        ("machine", &connection.machine_label),
+                        ("message", &message),
+                    ],
                 ));
             }
             Ok(_) => {}
@@ -248,7 +252,8 @@ fn json(value: &impl serde::Serialize) -> String {
 }
 
 impl Ui {
-    /// Shows `service` (as `remote_edit` shows it), keeping unsaved typing.
+    /// Shows `service` as the window's settings, keeping unsaved typing:
+    /// what `Ui::adopt` adopts, after [`shown`].
     pub(in crate::rune_ui) fn show(&mut self, service: AppSettings) -> bool {
         let changed = service != self.settings;
         if changed {
@@ -270,7 +275,6 @@ impl Ui {
             self.settings_changed();
         }
         self.settings.source = service.source.clone();
-        self.service_settings = Some(service);
         changed
     }
 }

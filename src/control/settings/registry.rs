@@ -791,6 +791,11 @@ pub(super) const KEYS: &[Key] = &[
         "Labs: send dictations to the Hex connected with hex remote connect, which transcribes them and runs its Output steps; this Mac transcribes when it can't be reached (macOS)",
     ),
     key(
+        "labs.remote_devices",
+        Kind::Bool,
+        "Labs: pair other devices (hex remote pair) and transcribe their dictations here, running this Hex's Output steps; serving starts when Hex starts",
+    ),
+    key(
         "labs.transcribe_again",
         Kind::Bool,
         "Labs: transformations can hear a dictation again with another installed speech model \

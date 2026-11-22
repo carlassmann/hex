@@ -637,3 +637,55 @@ pub(super) fn run_control(
         .map(|response| response.reply)
         .map_err(|_| ())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unpaired(method: &str, path: &str) -> HttpRequest {
+        HttpRequest {
+            method: method.into(),
+            path: path.into(),
+            authorization: None,
+            dictation_token: None,
+            stream_token: None,
+            remote_application: None,
+            content_type: Some("audio/wav".into()),
+            content_length: Some(44),
+            body_prefix: Vec::new(),
+        }
+    }
+
+    fn status(action: RequestAction) -> u16 {
+        match action {
+            RequestAction::Respond(response) => response.status,
+            _ => panic!("expected an immediate response"),
+        }
+    }
+
+    #[test]
+    fn every_route_but_pairing_refuses_a_request_without_a_device_token() {
+        assert_eq!(
+            status(dictation_action(
+                unpaired("POST", "/remote/dictations"),
+                false
+            )),
+            401
+        );
+        assert_eq!(
+            status(timed::action(unpaired("POST", "/remote/transcriptions"))),
+            401
+        );
+        assert_eq!(
+            status(vocabulary_action(
+                unpaired("POST", "/remote/vocabulary"),
+                false
+            )),
+            401
+        );
+        assert_eq!(
+            status(edits::action(unpaired("POST", "/remote/control"))),
+            401
+        );
+    }
+}

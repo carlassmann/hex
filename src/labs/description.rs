@@ -219,6 +219,9 @@ impl Feature {
             Self::TranscribeAgain => {
                 "A transformation in hex.config.ts can ask for the dictation's audio to be transcribed again with another installed speech model (context.transcript.transcribeAgain), and transformations also run when a dictation heard speech but its transcript came back empty. The audio stays in memory"
             }
+            Self::RemoteDevices => {
+                "Hex on your iPhone or another Mac sends its dictations here, and this Hex transcribes them and runs its Output steps. Pair a device with a QR code and revoke ones you no longer use. Serving starts when Hex starts"
+            }
             Self::CopyDictationAudio => {
                 "History entries with a kept recording gain Copy audio, and the menu bar or tray gains Copy last dictation audio: one file on the clipboard, ready to attach. Needs Keep recordings, and copies the kept audio without storing any itself"
             }

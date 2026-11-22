@@ -1,6 +1,6 @@
-//! This fork's own translated strings (remote transcription, paired devices,
-//! Transcribe again in transforms), kept beside [`super::TRANSLATIONS`] so
-//! the main table stays under the source cap.
+//! Translated strings for Remote transcription, Remote devices, and
+//! Transcribe again in transforms, kept beside [`super::TRANSLATIONS`] so the
+//! main table stays under the source cap.
 
 use std::collections::HashMap;
 
@@ -54,6 +54,11 @@ pub(super) const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("It transcribes with {theirs}, this Mac with {ours}. Choose the same model in General for matching text", ["Tamten transkrybuje za pomocą {theirs}, ten Mac za pomocą {ours}. Wybierz ten sam model w Ogólnych, aby tekst był zgodny", "它使用 {theirs} 转写，这台 Mac 使用 {ours}。在通用中选择相同的模型以获得一致的文本", "向こうは {theirs}、この Mac は {ours} で文字起こしします。一致したテキストにするには一般で同じモデルを選んでください", "Es transkribiert mit {theirs}, dieser Mac mit {ours}. Wähle unter Allgemein dasselbe Modell für gleichen Text", "Transcribe con {theirs}; este Mac, con {ours}. Elige el mismo modelo en General para obtener el mismo texto", "Він транскрибує за допомогою {theirs}, цей Mac — {ours}. Виберіть ту саму модель у Загальних, щоб текст збігався"]),
     ("Transcribe again in transforms", ["Ponowna transkrypcja w przekształceniach", "在转换中重新转写", "変換で再び文字起こし", "Erneut transkribieren in Transformationen", "Volver a transcribir en transformaciones", "Повторна транскрипція в перетвореннях"]),
     ("Your transformations can hear a dictation again with another speech model", ["Twoje przekształcenia mogą ponownie przesłuchać dyktowanie innym modelem mowy", "你的转换可以用另一个语音模型重新识别一次听写", "変換で、音声入力をもう一度別の音声モデルで聞き直せます", "Deine Transformationen können ein Diktat mit einem anderen Sprachmodell erneut hören", "Tus transformaciones pueden volver a escuchar un dictado con otro modelo de voz", "Ваші перетворення можуть ще раз прослухати диктування іншою моделлю мовлення"]),
+    ("Transcribe for your iPhone or another Mac", ["Transkrybuj dla iPhone'a lub innego Maca", "为你的 iPhone 或另一台 Mac 转写", "iPhone や別の Mac のために文字起こし", "Für dein iPhone oder einen anderen Mac transkribieren", "Transcribe para tu iPhone u otro Mac", "Транскрибувати для iPhone або іншого Mac"]),
+    ("Too many edits waiting to reach the other Hex; try again", ["Zbyt wiele zmian czeka na wysłanie do drugiego Hex; spróbuj ponownie", "等待发送到另一台 Hex 的修改太多，请重试", "もう一方の Hex に送る変更が多すぎます。もう一度お試しください", "Zu viele Änderungen warten auf das andere Hex; versuche es erneut", "Demasiados cambios esperan llegar al otro Hex; inténtalo de nuevo", "Забагато змін очікує на надсилання до іншого Hex; спробуйте ще раз"]),
+    ("Sending edits stopped", ["Wysyłanie zmian zostało przerwane", "发送修改已中断", "変更の送信が中断しました", "Das Senden der Änderungen wurde abgebrochen", "El envío de cambios se detuvo", "Надсилання змін перервано"]),
+    ("Remote transcription is off, so the edit wasn't sent", ["Transkrypcja zdalna jest wyłączona, więc zmiana nie została wysłana", "远程转写已关闭，因此未发送修改", "リモート文字起こしがオフのため、変更は送信されませんでした", "Entfernte Transkription ist aus, daher wurde die Änderung nicht gesendet", "La transcripción remota está desactivada, así que el cambio no se envió", "Віддалене транскрибування вимкнено, тому зміну не надіслано"]),
+    ("{machine} refused the edit: {message}", ["{machine} odrzucił zmianę: {message}", "{machine} 拒绝了修改：{message}", "{machine} が変更を拒否しました: {message}", "{machine} hat die Änderung abgelehnt: {message}", "{machine} rechazó el cambio: {message}", "{machine} відхилив зміну: {message}"]),
 ];
 
 /// Russian for the strings above, chained into [`super::russian::table`].
@@ -86,6 +91,11 @@ pub(super) const RUSSIAN: &[(&str, &str)] = &[
     ("It transcribes with {theirs}, this Mac with {ours}. Choose the same model in General for matching text", "Он транскрибирует с помощью {theirs}, этот Mac — с помощью {ours}. Выберите ту же модель в разделе «Общие», чтобы текст совпадал"),
     ("Transcribe again in transforms", "Повторная транскрипция в преобразованиях"),
     ("Your transformations can hear a dictation again with another speech model", "Ваши преобразования могут ещё раз прослушать диктовку другой моделью речи"),
+    ("Transcribe for your iPhone or another Mac", "Транскрибировать для iPhone или другого Mac"),
+    ("Too many edits waiting to reach the other Hex; try again", "Слишком много изменений ждут отправки на другой Hex; попробуйте ещё раз"),
+    ("Sending edits stopped", "Отправка изменений прервана"),
+    ("Remote transcription is off, so the edit wasn't sent", "Удалённая транскрипция выключена, поэтому изменение не отправлено"),
+    ("{machine} refused the edit: {message}", "{machine} отклонил изменение: {message}"),
 ];
 
 /// French for the strings above, chained into [`super::french::table`].
@@ -118,6 +128,11 @@ pub(super) const FRENCH: &[(&str, &str)] = &[
     ("It transcribes with {theirs}, this Mac with {ours}. Choose the same model in General for matching text", "Il transcrit avec {theirs}, ce Mac avec {ours}. Choisissez le même modèle dans Général pour un texte identique"),
     ("Transcribe again in transforms", "Retranscrire dans les transformations"),
     ("Your transformations can hear a dictation again with another speech model", "Vos transformations peuvent réécouter une dictée avec un autre modèle vocal"),
+    ("Transcribe for your iPhone or another Mac", "Transcrire pour votre iPhone ou un autre Mac"),
+    ("Too many edits waiting to reach the other Hex; try again", "Trop de modifications attendent d'atteindre l'autre Hex ; réessayez"),
+    ("Sending edits stopped", "L'envoi des modifications s'est arrêté"),
+    ("Remote transcription is off, so the edit wasn't sent", "La transcription à distance est désactivée, la modification n'a donc pas été envoyée"),
+    ("{machine} refused the edit: {message}", "{machine} a refusé la modification : {message}"),
 ];
 
 /// Brazilian Portuguese for the strings above, chained into [`super::portuguese::table`].
@@ -150,4 +165,9 @@ pub(super) const PORTUGUESE: &[(&str, &str)] = &[
     ("It transcribes with {theirs}, this Mac with {ours}. Choose the same model in General for matching text", "Ele transcreve com {theirs}, este Mac com {ours}. Escolha o mesmo modelo em Geral para obter o mesmo texto"),
     ("Transcribe again in transforms", "Transcrever de novo nas transformações"),
     ("Your transformations can hear a dictation again with another speech model", "Suas transformações podem ouvir um ditado de novo com outro modelo de voz"),
+    ("Transcribe for your iPhone or another Mac", "Transcrever para o seu iPhone ou outro Mac"),
+    ("Too many edits waiting to reach the other Hex; try again", "Há edições demais esperando para chegar ao outro Hex; tente novamente"),
+    ("Sending edits stopped", "O envio das edições parou"),
+    ("Remote transcription is off, so the edit wasn't sent", "A transcrição remota está desativada, então a edição não foi enviada"),
+    ("{machine} refused the edit: {message}", "{machine} recusou a edição: {message}"),
 ];

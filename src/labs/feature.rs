@@ -238,6 +238,7 @@ define_features! {
     MiddleMouseDictation => labs(middle_mouse_dictation), "middle-mouse-dictation", Shortcuts, Everyone, MACOS, 20261125;
     RemoteTranscription => labs(remote_transcription), "remote-transcription", Dictation, Everyone, MACOS, 20261111;
     TranscribeAgain => labs(transcribe_again), "transcribe-again", Dictation, Everyone, EVERY, 20261121;
+    RemoteDevices => labs(remote_devices), "remote-devices", Dictation, Everyone, EVERY, 20261122;
 }
 
 impl Feature {

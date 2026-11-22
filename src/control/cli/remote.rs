@@ -4,6 +4,8 @@ use clap::Subcommand;
 
 use super::EXIT_REFUSED;
 
+const LAB_OFF: &str = "Remote devices is a Labs feature and is off. Turn it on with `hex labs on remote-devices` or in Settings › Labs.";
+
 #[derive(Subcommand, Debug)]
 pub enum RemoteCli {
     /// Print a one-time code a device can pair with for five minutes.
@@ -46,6 +48,10 @@ fn remote_command(command: RemoteCli) -> color_eyre::Result<u8> {
     use crate::remote::pairing;
     match command {
         RemoteCli::Pair => {
+            if !crate::labs::remote_devices() {
+                eprintln!("{LAB_OFF}");
+                return Ok(EXIT_REFUSED);
+            }
             let was_enabled = pairing::enabled();
             pairing::set_enabled(true)?;
             let code = pairing::issue_pairing_code()?;

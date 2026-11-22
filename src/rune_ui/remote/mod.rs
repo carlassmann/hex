@@ -348,9 +348,9 @@ pub(super) fn output_note(ui: &Ui, p: Paint) -> Option<El> {
 }
 
 /// Remote devices: pairing a new one and the ones this Hex serves.
-pub(super) fn devices_section(ui: &Ui, p: Paint) -> El {
+pub(super) fn devices(ui: &Ui, p: Paint) -> El {
     let state = &ui.remote;
-    let mut rows: Vec<CardRow> = Vec::new();
+    let mut rows: Vec<El> = Vec::new();
     match &state.pairing {
         Some(pairing) => rows.push(pairing_row(p, pairing)),
         None => {
@@ -370,8 +370,7 @@ pub(super) fn devices_section(ui: &Ui, p: Paint) -> El {
                         "Hex on your iPhone or another Mac sends its dictations here, and this Hex transcribes them and runs its Output steps",
                     )),
                     pair,
-                )
-                .into(),
+                ),
             );
         }
     }
@@ -384,25 +383,18 @@ pub(super) fn devices_section(ui: &Ui, p: Paint) -> El {
             ButtonKind::Secondary,
             move |ui: &mut Ui, _| revoke(ui, &id),
         );
-        rows.push(
-            controls::setting_row(
-                p,
-                &format!("remote-device-{}", device.id),
-                &device.label,
-                None,
-                revoke,
-            )
-            .into(),
-        );
+        rows.push(controls::setting_row(
+            p,
+            &format!("remote-device-{}", device.id),
+            &device.label,
+            None,
+            revoke,
+        ));
     }
-    col()
-        .key("remote-devices")
-        .gap(8.0)
-        .child(p.section_label(tr("Remote devices")))
-        .child(card(p, "remote-devices-card", rows))
+    col().key("remote-devices").children(rows)
 }
 
-fn pairing_row(p: Paint, pairing: &Pairing) -> CardRow {
+fn pairing_row(p: Paint, pairing: &Pairing) -> El {
     let mut about = vec![
         tr_fill("Address {}", &pairing.address()),
         tr_fill("Code {}", &pairing.spaced_code()),
@@ -436,7 +428,6 @@ fn pairing_row(p: Paint, pairing: &Pairing) -> CardRow {
         .child(qr(p, &pairing.link()))
         .child(details)
         .child(done)
-        .into()
 }
 
 /// The pair link as a QR code, one box per run of dark modules, dark on a

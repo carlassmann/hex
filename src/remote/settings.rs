@@ -291,6 +291,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_paired_device_edits_only_the_mirrored_settings() {
+        let set = |key: &str| ControlCommand::SettingsSet {
+            key: key.into(),
+            value: "1".into(),
+        };
+        assert!(edits_remote(&set("dictation_processing.default_mode")));
+        assert!(edits_remote(&set("vocabulary_boost")));
+        assert!(edits_remote(&ControlCommand::VocabularyList));
+        assert!(!edits_remote(&set("release_microphone_while_idle")));
+        assert!(!edits_remote(&set("dictation_processing_extra")));
+        assert!(!edits_remote(&ControlCommand::SettingsGet { key: None }));
+        assert!(!edits_remote(&ControlCommand::SettingsApply {
+            values: Default::default()
+        }));
+        assert!(!edits_remote(&ControlCommand::Quit { force: true }));
+    }
+
+    #[test]
     fn served_settings_read_back_the_same() {
         let settings = AppSettings {
             vocabulary: vec![VocabularyEntry {

@@ -1041,7 +1041,7 @@ final class KeyboardViewController: UIInputViewController {
         guard snap.hasDeliverableResult(at: now),
               let resultID = snap.resultID,
               let transcript = snap.transcript,
-              bridge.lastInsertedResultID != resultID else { return false }
+              !bridge.wasInserted(resultID) else { return false }
         insertDictation(
             transcript,
             resultID: resultID,
@@ -1060,7 +1060,7 @@ final class KeyboardViewController: UIInputViewController {
     /// A dictation the keyboard finished after it hid goes into its own field while fresh;
     /// elsewhere or later the strip offers it (`refreshOfferedDictation`).
     private func insertHeldDictation(now: TimeInterval) -> Bool {
-        guard let held = bridge.heldDictation, bridge.lastInsertedResultID != held.id,
+        guard let held = bridge.heldDictation, !bridge.wasInserted(held.id),
               held.delivery(in: currentDocument, at: now) == .insert else { return false }
         bridge.heldDictation = nil
         insertDictation(held.text, resultID: held.id, heard: held.heard, stages: nil, source: "keyboard")
@@ -1083,7 +1083,7 @@ final class KeyboardViewController: UIInputViewController {
     private func refreshOfferedDictation(app: KeyboardSnapshot, now: TimeInterval) {
         var offer: OfferedDictation?
         if let held = bridge.heldDictation {
-            if bridge.lastInsertedResultID == held.id {
+            if bridge.wasInserted(held.id) {
                 bridge.heldDictation = nil
             } else {
                 switch held.delivery(in: currentDocument, at: now) {
@@ -1094,7 +1094,7 @@ final class KeyboardViewController: UIInputViewController {
             }
         }
         if offer == nil, !app.hasDeliverableResult(at: now), app.hasOfferableResult(at: now),
-           let id = app.resultID, let text = app.transcript, bridge.lastInsertedResultID != id {
+           let id = app.resultID, let text = app.transcript, !bridge.wasInserted(id) {
             offer = OfferedDictation(id: id, text: text, heard: app.heard, held: false)
         }
         if offer?.id != offeredDictation?.id { viewModel.showStoppedNote(offer?.held == true ? bridge.heldDictation?.stoppedAfter : nil) }

@@ -513,6 +513,7 @@ struct KeyboardBridge {
         /// microphone off). Read only while Microphone is unset.
         static let allowBluetoothMic = "settings.allowBluetoothMic"
         static let lastInsertedResultID = "keyboard.lastInsertedResultID"
+        static let insertedResultIDs = "keyboard.insertedResultIDs"
         static let fullAccessSeenAt = "keyboard.fullAccessSeenAt"
         static let fullAccessOn = "keyboard.fullAccessOn"
         static let fullAccessOff = "keyboard.fullAccessOff"
@@ -675,7 +676,27 @@ struct KeyboardBridge {
         }
         nonmutating set {
             defaults?.set(newValue, forKey: Key.lastInsertedResultID)
+            if let newValue { rememberInserted(newValue) }
         }
+    }
+
+    /// Recent inserted results, not just the last: the keyboard delivers its own dictation
+    /// and Hex's from one poll, so with only the last one remembered, Hex's earlier result
+    /// went in a second time right after the keyboard's newer one.
+    static let insertedResultsKept = 20
+
+    func wasInserted(_ resultID: String) -> Bool {
+        lastInsertedResultID == resultID || insertedResultIDs.contains(resultID)
+    }
+
+    private var insertedResultIDs: [String] {
+        defaults?.stringArray(forKey: Key.insertedResultIDs) ?? []
+    }
+
+    private func rememberInserted(_ resultID: String) {
+        guard !insertedResultIDs.contains(resultID) else { return }
+        let kept = (insertedResultIDs + [resultID]).suffix(Self.insertedResultsKept)
+        defaults?.set(Array(kept), forKey: Key.insertedResultIDs)
     }
 
     /// When the keyboard last ran with Full Access. Without Full Access the keyboard

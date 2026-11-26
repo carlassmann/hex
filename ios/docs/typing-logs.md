@@ -21,7 +21,7 @@ averages and is unchanged.
 ## Files
 
 - `TypingLogs/yyyy-MM-dd.ndjson` in the App Group container
-  (`group.anomaly.hex.mobile`), one per local day (Gregorian date in the
+  (`group.com.carlassmann.hex.mobile`), one per local day (Gregorian date in the
   iPhone's time zone). Each event goes to the file of the day its `t` falls in.
 - NDJSON: one JSON object per line, UTF-8, `\n` after every line.
 - Kept 14 days (today and the 13 before). Older files are deleted when the

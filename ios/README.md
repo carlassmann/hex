@@ -6,7 +6,7 @@
 (`SpeechTranscriber`, or `DictationTranscriber` for the languages it lacks),
 FluidAudio Parakeet V2 (iOS 18+, English), and `SFSpeechRecognizer` before
 iOS 26. The keyboard dictates by itself on iOS 26+ (in-keyboard dictation), or
-over the shared App Group (`group.anomaly.hex.mobile`) in a warm session.
+over the shared App Group (`group.com.carlassmann.hex.mobile`) in a warm session.
 Audio never leaves the iPhone, and Hex removes each capture's file after
 inference, cancellation, or failure.
 

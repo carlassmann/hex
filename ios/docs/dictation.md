@@ -20,7 +20,7 @@ or after Parakeet couldn't load, goes to Apple's `SFSpeechRecognizer` on device
 only (`OnDeviceSpeechTranscriber`, chosen by `SpeechEngineChoice`). Hex removes
 each capture's file after inference, cancellation, or failure. During a warm session the keyboard
 extension sends commands and inserts completed text over the shared App Group
-(`group.anomaly.hex.mobile`). Otherwise it dictates by itself (in-keyboard
+(`group.com.carlassmann.hex.mobile`). Otherwise it dictates by itself (in-keyboard
 dictation, iOS 26+): iOS refuses to record from a keyboard extension
 directly, so it captures through `getUserMedia` in a hidden `WKWebView`
 under Hex's microphone permission, writes a temporary WAV, and transcribes

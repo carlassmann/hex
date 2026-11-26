@@ -275,7 +275,7 @@ final class LiveDictationPreviewHost {
         }
     }
 
-    private static let log = Logger(subsystem: "anomaly.hex.mobile.keyboard", category: "capture-probe")
+    private static let log = Logger(subsystem: "com.carlassmann.hex.mobile.keyboard", category: "capture-probe")
 
     private static func spring(_ duration: TimeInterval, _ changes: @escaping () -> Void, completion: (() -> Void)? = nil) {
         UIView.animate(

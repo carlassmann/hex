@@ -4,7 +4,7 @@ import os
 final class KeyboardProbeLog: @unchecked Sendable {
     static let shared = KeyboardProbeLog()
 
-    private let logger = Logger(subsystem: "anomaly.hex.mobile.keyboard", category: "capture-probe")
+    private let logger = Logger(subsystem: "com.carlassmann.hex.mobile.keyboard", category: "capture-probe")
     private let lock = NSLock()
     private let url = FileManager.default
         .containerURL(forSecurityApplicationGroupIdentifier: KeyboardBridge.appGroup)?

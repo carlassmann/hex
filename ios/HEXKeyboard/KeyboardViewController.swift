@@ -283,15 +283,8 @@ final class KeyboardViewController: UIInputViewController {
         typingLog?.flush()
     }
 
-    private var lastMemoryRelease: TimeInterval = 0
-
-    /// Dictating in the keyboard beats opening Hex, so before giving up for lack of memory the
-    /// keyboard drops what it can load again and isn't on screen (emoji, an idle recording
-    /// panel). At most every 10 s, as availability is checked on every poll.
     private func freeMemoryForDictation() {
-        let now = Date().timeIntervalSince1970
-        guard now - lastMemoryRelease >= 10 else { return }
-        lastMemoryRelease = now
+        guard KeyboardPairedHex.memoryReleaseDue() else { return }
         fullKeyboard?.releaseHiddenCaches()
         if barEmojiPanel == nil { barEmojiLibrary = nil }
     }
@@ -350,16 +343,8 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
-    /// A short selection (a name or term, not a sentence) can be added to the word list.
     private func updateSelectedWord() {
-        let selected = textDocumentProxy.selectedText?
-            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
-        let candidate = selected.flatMap { text -> String? in
-            guard !text.isEmpty, text.count <= 64,
-                  text.split(whereSeparator: \.isWhitespace).count <= 4
-            else { return nil }
-            return text
-        }
+        let candidate = KeyboardPairedHex.wordListCandidate(textDocumentProxy.selectedText)
         if candidate != viewModel.selectedWord {
             viewModel.selectedWord = candidate
             if candidate == nil { viewModel.addedWord = nil }
@@ -1003,14 +988,7 @@ final class KeyboardViewController: UIInputViewController {
         refreshOfferedDictation(app: appSnapshot, now: now)
 
         syncLanguageState()
-        let transcriberName = bridge.transcriberName
-        if viewModel.transcriberName != transcriberName {
-            viewModel.transcriberName = transcriberName
-        }
-        let transcriptionStatus = snap.state == .transcribing ? bridge.transcriptionStatus : nil
-        if viewModel.transcriptionStatus != transcriptionStatus {
-            viewModel.transcriptionStatus = transcriptionStatus
-        }
+        KeyboardPairedHex.syncTranscriber(viewModel, bridge: bridge, transcribing: snap.state == .transcribing)
 
         viewModel.applyBridgeState(
             hasFullAccess: true,

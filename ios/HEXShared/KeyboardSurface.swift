@@ -575,15 +575,10 @@ struct KeyboardSurfaceView: View {
 
     private var topBar: some View {
         let p = palette
-        let showWordList = model.activeTray == .none
-            && model.hasFullAccess
-            && (model.selectedWord ?? model.addedWord) != nil
         return ZStack {
             defaultTopBar(palette: p)
-                .hexTrayReveal(model.activeTray == .none && !showWordList, reduceMotion: reduceMotion, offsetY: -3)
-
-            wordListBar(palette: p)
-                .hexTrayReveal(showWordList, reduceMotion: reduceMotion, offsetY: 3.5)
+                .hexTrayReveal(model.activeTray == .none && !model.showsWordList, reduceMotion: reduceMotion, offsetY: -3)
+            KeyboardWordListBar(model: model, text: p.textBase, mutedText: p.textMuted, fill: p.chipIdleFill, reduceMotion: reduceMotion)
 
             styleTrayBar(palette: p)
                 .hexTrayReveal(model.activeTray == .style, reduceMotion: reduceMotion, offsetY: 3.5)
@@ -752,38 +747,6 @@ struct KeyboardSurfaceView: View {
         .layoutPriority(1)
     }
 
-    @ViewBuilder
-    private func wordListBar(palette p: KeyboardChromePalette) -> some View {
-        if let word = model.selectedWord, word != model.addedWord {
-            Button {
-                model.onAddWord?(word)
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "text.badge.plus")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("Add “\(word)” to word list")
-                        .font(.system(size: 12, weight: .medium))
-                        .lineLimit(1)
-                }
-                .foregroundStyle(p.textBase)
-                .padding(.horizontal, 12)
-                .frame(maxWidth: .infinity, minHeight: 26)
-                .background(p.chipIdleFill, in: Capsule())
-            }
-            .buttonStyle(.plain)
-        } else if let word = model.addedWord {
-            HStack(spacing: 6) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("“\(word)” is in your word list")
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(p.textMuted)
-            .frame(maxWidth: .infinity, minHeight: 26)
-        }
-    }
-
     private func styleTrayBar(palette p: KeyboardChromePalette) -> some View {
         let firstStyle = DictationStyle.allCases.first
         return HStack(spacing: 4) {
@@ -828,7 +791,6 @@ struct KeyboardSurfaceView: View {
         } else {
             nil
         }
-        let showTranscriber = model.hasFullAccess && model.stagePhase == .transcribing
 
         return ZStack(alignment: .leading) {
             HStack(spacing: 6) {
@@ -854,12 +816,7 @@ struct KeyboardSurfaceView: View {
                 KeyboardRecordingClockText(clock: model.clock, color: p.textBase)
             }
             .hexTrayReveal(slot == .recording, reduceMotion: reduceMotion, offsetY: 2)
-
-            Text(model.transcriptionStatus ?? "Transcribing on \(model.transcriberName ?? "iPhone")")
-                .font(.system(size: 13, weight: .regular))
-                .foregroundStyle(p.textMuted)
-                .lineLimit(1)
-                .hexTrayReveal(showTranscriber, reduceMotion: reduceMotion, offsetY: 2)
+            KeyboardTranscriberStatus(model: model, color: p.textMuted, reduceMotion: reduceMotion)
 
             Group {
                 if let messageSlot {

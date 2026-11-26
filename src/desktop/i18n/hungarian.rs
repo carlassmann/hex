@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use super::screenshots::{Language, merged};
+use super::{remote::merged, screenshots::Language};
 
 /// The Hungarian strings by their English source.
 pub(super) fn table() -> &'static HashMap<&'static str, &'static str> {

@@ -15,8 +15,7 @@ pub(super) fn merged(
         Language::French => FRENCH,
         Language::Portuguese => PORTUGUESE,
         Language::Russian => RUSSIAN,
-        // No Hungarian strings for the fork's own yet: they read in English.
-        Language::Hungarian => &[],
+        Language::Hungarian => HUNGARIAN,
     };
     let mut merged = super::screenshots::merged(table, language);
     merged.extend(fork.iter().copied());
@@ -170,4 +169,41 @@ pub(super) const PORTUGUESE: &[(&str, &str)] = &[
     ("Sending edits stopped", "O envio das edições parou"),
     ("Remote transcription is off, so the edit wasn't sent", "A transcrição remota está desativada, então a edição não foi enviada"),
     ("{machine} refused the edit: {message}", "{machine} recusou a edição: {message}"),
+];
+
+/// Not yet reviewed by a native speaker; terms follow `super::hungarian`.
+#[rustfmt::skip]
+pub(super) const HUNGARIAN: &[(&str, &str)] = &[
+    ("Remote transcription", "Távoli átírás"),
+    ("Send dictations, meeting audio, and Annotate narration to another Hex, which transcribes them and runs its Output steps. When it can't be reached, this Mac does", "A diktálásokat, a megbeszélések hangját és az Annotálás narrációját egy másik Hexnek küldi, amely átírja őket és lefuttatja a Kimenet lépéseit. Ha nem érhető el, ez a Mac végzi"),
+    ("Connecting stopped.", "A kapcsolódás megszakadt."),
+    ("Disconnect", "Leválasztás"),
+    ("Sends to {}", "Ide küld: {}"),
+    ("Address or pair link", "Cím vagy párosítási hivatkozás"),
+    ("Code", "Kód"),
+    ("Connect", "Kapcsolódás"),
+    ("On the other Hex, open Labs and choose Pair a device", "A másik Hexen nyissa meg a Labort, és válassza az Eszköz párosítása lehetőséget"),
+    ("Connect to", "Kapcsolódás ehhez"),
+    ("Enter the other Hex's address and code.", "Adja meg a másik Hex címét és kódját."),
+    ("Pair a device", "Eszköz párosítása"),
+    ("Transcribe for other devices", "Átírás más eszközöknek"),
+    ("Hex on your iPhone or another Mac sends its dictations here, and this Hex transcribes them and runs its Output steps", "Az iPhone-ján vagy egy másik Macen futó Hex ide küldi a diktálásait, ez a Hex pedig átírja őket és lefuttatja a Kimenet lépéseit"),
+    ("Revoke", "Visszavonás"),
+    ("Remote devices", "Távoli eszközök"),
+    ("Address {}", "Cím: {}"),
+    ("Code {}", "Kód: {}"),
+    ("Scan with Hex on your iPhone, or enter both on the other Mac. The code works once, for five minutes.", "Olvassa be az iPhone-ján futó Hexszel, vagy adja meg mindkettőt a másik Macen. A kód egyszer használható, öt percig."),
+    ("Restart Hex to start serving devices.", "Indítsa újra a Hexet az eszközök kiszolgálásához."),
+    ("Editing {}'s steps", "{} lépéseinek szerkesztése"),
+    ("Remote transcription is on, so dictations use the steps and vocabulary on that Hex. Changes here, Edit with agent, and hex settings on this Mac change them there", "A távoli átírás be van kapcsolva, így a diktálások annak a Hexnek a lépéseit és szókincsét használják. Az itteni módosítások, a Szerkesztés ügynökkel és a hex settings ezen a Macen ott módosítják őket"),
+    ("Its Output steps aren't copied yet, so a fallback here uses this Mac's own", "A Kimenet lépései még nincsenek átmásolva, ezért egy itteni tartalék ennek a Macnek a sajátjait használja"),
+    ("When it can't be reached, this Mac uses a copy of its Output steps and vocabulary", "Ha nem érhető el, ez a Mac a Kimenet lépéseinek és a szókincsének másolatát használja"),
+    ("It transcribes with {theirs}, this Mac with {ours}. Choose the same model in General for matching text", "Az a(z) {theirs} modellel ír át, ez a Mac a(z) {ours} modellel. Azonos szöveghez válassza ugyanazt a modellt az Általános részben"),
+    ("Transcribe again in transforms", "Újraátírás az átalakításokban"),
+    ("Your transformations can hear a dictation again with another speech model", "Az átalakításai egy másik beszédmodellel újra meghallgathatnak egy diktálást"),
+    ("Transcribe for your iPhone or another Mac", "Átírás az iPhone-jának vagy egy másik Macnek"),
+    ("Too many edits waiting to reach the other Hex; try again", "Túl sok módosítás vár arra, hogy eljusson a másik Hexhez; próbálja újra"),
+    ("Sending edits stopped", "A módosítások küldése leállt"),
+    ("Remote transcription is off, so the edit wasn't sent", "A távoli átírás ki van kapcsolva, ezért a módosítás nem lett elküldve"),
+    ("{machine} refused the edit: {message}", "{machine} elutasította a módosítást: {message}"),
 ];

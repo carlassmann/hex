@@ -78,6 +78,8 @@ enum RemoteHexPairing {
 /// whenever that Hex can't answer, unless that fallback is turned off.
 actor RemoteTranscriber: LocalTranscribing {
     nonisolated let displayName: String
+    /// The paired Hex picks its own model; this is the engine a fallback runs on.
+    nonisolated let engine: DictationEngine
 
     private let hex: PairedHex
     private let token: String
@@ -96,6 +98,7 @@ actor RemoteTranscriber: LocalTranscribing {
         self.token = token
         self.fallback = fallback
         self.displayName = hex.name
+        self.engine = fallback.engine
         let configuration = URLSessionConfiguration.ephemeral
         // The longest gap between bytes. Hex sends a progress line every second while it
         // works, so this passes only when it is gone, however long the dictation.

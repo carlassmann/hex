@@ -15,7 +15,7 @@ use crate::dictation::context::ContextSnapshot;
 use crate::dictation::paste_last::LastDictation;
 use crate::dictation::processor::ProcessingObservation;
 use crate::dictation::{DictationClip, correction_watch, heard, pad_for_parakeet};
-use crate::history::History;
+use crate::history::{History, Recording};
 #[cfg(test)]
 use crate::history::HistoryKind;
 use crate::paste::{PasteMode, Paster};

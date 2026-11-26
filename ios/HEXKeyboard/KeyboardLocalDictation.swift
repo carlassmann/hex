@@ -35,6 +35,8 @@ final class KeyboardLocalDictation {
     private struct AudioSink {
         var pcmFile: KeyboardPCMFile
         var live: KeyboardLiveDictation?
+        /// The paired Hex's stream of the same audio (this fork), nil when none is paired.
+        var remote: KeyboardRemoteFeed?
         /// Audio since a possible send (`holdForSend`), at most `KeyboardLiveTyping.sendConfirmation` of it.
         var sendHeld: [Data]?
 
@@ -44,6 +46,7 @@ final class KeyboardLocalDictation {
             } else {
                 pcmFile.append(data)
                 live?.append(data)
+                remote?.append(data)
             }
         }
 
@@ -54,6 +57,8 @@ final class KeyboardLocalDictation {
 
         mutating func discard() {
             stopLive()
+            remote?.cancel()
+            remote = nil
             _ = pcmFile.close()
             try? FileManager.default.removeItem(at: pcmFile.url)
         }
@@ -80,6 +85,13 @@ final class KeyboardLocalDictation {
                 sink.discard()
             case .awaitingAudioSession, .awaitingPage:
                 break
+            }
+        }
+
+        var remote: KeyboardRemoteFeed? {
+            switch self {
+            case .awaitingFirstAudio(let sink, _), .streaming(let sink, _): sink.remote
+            case .awaitingAudioSession, .awaitingPage: nil
             }
         }
 
@@ -520,6 +532,7 @@ final class KeyboardLocalDictation {
             setSession(.failed(message: message, until: Date().timeIntervalSince1970 + 6))
         case .capturing(let state):
             setSession(.active(state))
+            state.resources.remote?.send()
             let liveLabel = state.resources.isStreaming ? "already live" : "waiting for first audio"
             KeyboardProbeLog.shared.write("touch-down capture kept after \(Int((Date().timeIntervalSince1970 - state.requestedAt) * 1000)) ms (\(liveLabel))")
         }
@@ -695,8 +708,11 @@ final class KeyboardLocalDictation {
                     let url = FileManager.default.temporaryDirectory.appendingPathComponent("keyboard-\(jobID).wav")
                     let pcmFile = try KeyboardPCMFile(url: url, sampleRate: sampleRate)
                     let live = KeyboardLiveDictation.start(sampleRate: sampleRate, text: liveText)
+                    let remote = KeyboardRemoteFeed.make(capturedSampleRate: sampleRate)
+                    // A touch-down capture sends only once the touch is kept (`keepArmed`).
+                    if case .active = session { remote?.send() }
                     state.resources = .awaitingFirstAudio(
-                        sink: AudioSink(pcmFile: pcmFile, live: live),
+                        sink: AudioSink(pcmFile: pcmFile, live: live, remote: remote),
                         timeline: timeline
                     )
                 } catch {
@@ -853,6 +869,9 @@ final class KeyboardLocalDictation {
             return nil
         }
         sink.live = KeyboardLiveDictation.start(sampleRate: old.sampleRate, text: liveText)
+        sink.remote?.cancel()
+        sink.remote = KeyboardRemoteFeed.make(capturedSampleRate: old.sampleRate)
+        sink.remote?.send()
         let restartedAt = Date().timeIntervalSince1970
         KeyboardProbeLog.shared.write("sent after \(String(format: "%.1f", restartedAt - startedAt)) s, frames=\(frames): a new dictation from the next chunk \(KeyboardProbeLog.memory())")
         return restartedAt
@@ -1031,6 +1050,8 @@ final class KeyboardLocalDictation {
         releaseAudioSession()
         let job = state.job
         let file = sink.pcmFile
+        let remote = sink.remote
+        remote?.close()
         let seconds = Date().timeIntervalSince1970 - startedAt
         let frames = file.close()
         KeyboardProbeLog.shared.write("stopped after \(String(format: "%.1f", seconds)) s, frames=\(frames) \(KeyboardProbeLog.memory())")
@@ -1039,10 +1060,12 @@ final class KeyboardLocalDictation {
         #endif
         guard !EmptyCapture.isTooShort(frames: frames, sampleRate: file.sampleRate) else {
             try? FileManager.default.removeItem(at: file.url)
+            remote?.cancel()
             endQuietly("too short to hold a word")
             return
         }
         guard #available(iOS 26.0, *) else {
+            remote?.cancel()
             setSession(.idle)
             return
         }
@@ -1061,7 +1084,7 @@ final class KeyboardLocalDictation {
             defer { Self.transcribingJobs.remove(job.id) }
             let started = Date()
             do {
-                let (heard, language, engine) = try await Self.transcribe(url, hints: hints, audioSeconds: seconds)
+                let (heard, language, engine) = try await Self.transcribe(url, hints: hints, audioSeconds: seconds, streamed: remote)
                 // A recording left for the next keyboard stays until its text is held.
                 if !job.interrupted { try? FileManager.default.removeItem(at: url) }
                 let locale = language.identifier
@@ -1145,10 +1168,16 @@ final class KeyboardLocalDictation {
     /// can't answer falls back to this iPhone unless that fallback is off in the app.
     @available(iOS 26.0, *)
     private static func transcribe(
-        _ url: URL, hints: [String], audioSeconds: Double
+        _ url: URL, hints: [String], audioSeconds: Double, streamed: KeyboardRemoteFeed? = nil
     ) async throws -> (String, SpeechLanguage, String) {
         let onThisIPhone = { try await KeyboardTranscription.transcribe(url, hints: hints, audioSeconds: audioSeconds) }
-        guard let paired = PairedHexStore.load() else { return try await onThisIPhone() }
+        guard let paired = PairedHexStore.load() else {
+            streamed?.cancel()
+            return try await onThisIPhone()
+        }
+        if let text = try await streamed?.text() {
+            return (text, pairedHexLanguage, paired.hex.name)
+        }
         do {
             let text = try await KeyboardRemoteTranscription.transcribe(url, on: paired.hex, token: paired.token)
             return (text, pairedHexLanguage, paired.hex.name)

@@ -905,7 +905,7 @@ struct ContentView: View {
 
     private var primaryActionLabel: String {
         switch dictation.phase {
-        case .failed where dictation.unsentRecording != nil:
+        case .failed where dictation.primaryActionRetriesUnsentRecording:
             String(localized: "Try again")
         default:
             dictation.primaryActionPreparesModel ? String(localized: "Set up") : String(localized: "Dictate")
@@ -914,7 +914,7 @@ struct ContentView: View {
 
     private var primaryActionIcon: String {
         switch dictation.phase {
-        case .failed where dictation.unsentRecording != nil:
+        case .failed where dictation.primaryActionRetriesUnsentRecording:
             "arrow.clockwise"
         default:
             dictation.primaryActionPreparesModel ? "arrow.down" : "mic.fill"

@@ -123,6 +123,13 @@ final class DictationController {
     var transcript = ""
     /// The last recording no machine transcribed; Try again sends it again.
     private(set) var unsentRecording = UnsentRecordings.latest()
+    /// The failure the unsent recording's transcription ended in. A recording kept days ago
+    /// mustn't take over Try again from a later microphone or model failure.
+    private var unsentRecordingFailure: TimedMessage?
+    /// Try again sends the unsent recording again: the failure on screen is its transcription's.
+    var primaryActionRetriesUnsentRecording: Bool {
+        unsentRecording != nil && unsentRecordingFailure != nil && capture.failureMessage == unsentRecordingFailure
+    }
     @ObservationIgnored var audioLevel: Float = 0
     @ObservationIgnored var loudnessDB: Float = -120
     @ObservationIgnored private var rawRecordingDuration: TimeInterval = 0
@@ -478,13 +485,13 @@ final class DictationController {
     var primaryActionPreparesModel: Bool {
         switch phase {
         case .modelRequired: true
-        case .failed: !isModelReady && unsentRecording == nil
+        case .failed: !isModelReady && !primaryActionRetriesUnsentRecording
         default: false
         }
     }
 
     func performPrimaryAction() {
-        if case .failed = phase, unsentRecording != nil {
+        if primaryActionRetriesUnsentRecording {
             retryUnsentRecording()
             return
         }
@@ -1081,10 +1088,9 @@ final class DictationController {
                 let message = UserFacingError.message(for: error, context: .transcription)
                     + " " + String(localized: "Recording kept on this iPhone.")
                 self.setKeyboardMessage(keyboardJobID != nil ? message : nil)
-                self.transition(capture: .failed(
-                    message: TimedMessage(text: message, at: self.now()),
-                    retryableWithModelReady: self.isModelReady
-                ))
+                let failure = TimedMessage(text: message, at: self.now())
+                self.unsentRecordingFailure = failure
+                self.transition(capture: .failed(message: failure, retryableWithModelReady: self.isModelReady))
                 self.publishKeyboardSnapshot()
                 self.prepareDeferredLanguageIfNeeded()
             }
